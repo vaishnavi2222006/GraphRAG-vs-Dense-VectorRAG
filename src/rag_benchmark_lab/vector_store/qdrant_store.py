@@ -14,6 +14,14 @@ from ..schemas.documents import ChunkRecord, RetrievedChunk
 from ..utils.errors import ServiceUnavailableError
 
 
+def _to_point_id(chunk_id: str) -> str:
+    import uuid
+    try:
+        return str(uuid.UUID(chunk_id))
+    except (ValueError, AttributeError):
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, str(chunk_id)))
+
+
 class QdrantStore:
     def __init__(self, url: str, api_key: str | None, collection_name: str) -> None:
         self.url = url
@@ -68,7 +76,7 @@ class QdrantStore:
             payload = asdict(chunk)
             points.append(
                 qmodels.PointStruct(
-                    id=chunk.chunk_id,
+                    id=_to_point_id(chunk.chunk_id),
                     vector=vector,
                     payload=payload,
                 )
@@ -82,13 +90,27 @@ class QdrantStore:
             filter_ = qmodels.Filter(
                 must=[qmodels.FieldCondition(key="document_id", match=qmodels.MatchAny(any=document_ids))]
             )
-        results = client.search(collection_name=self.collection_name, query_vector=vector, limit=top_k, query_filter=filter_)
+        if hasattr(client, "query_points"):
+            response = client.query_points(
+                collection_name=self.collection_name,
+                query=vector,
+                limit=top_k,
+                query_filter=filter_,
+            )
+            results = response.points
+        else:
+            results = client.search(
+                collection_name=self.collection_name,
+                query_vector=vector,
+                limit=top_k,
+                query_filter=filter_,
+            )
         retrieved: list[RetrievedChunk] = []
         for result in results:
             payload = result.payload or {}
             retrieved.append(
                 RetrievedChunk(
-                    chunk_id=str(result.id),
+                    chunk_id=str(payload.get("chunk_id") or result.id),
                     document_id=str(payload.get("document_id", "")),
                     document_name=str(payload.get("document_name", "")),
                     chunk_index=int(payload.get("chunk_index", 0)),

@@ -159,5 +159,17 @@ class DocumentService:
         return warnings
 
     def clear_corpus(self) -> None:
+        try:
+            client = self.qdrant_store._get_client()
+            if client.collection_exists(self.qdrant_store.collection_name):
+                client.delete_collection(self.qdrant_store.collection_name)
+        except Exception:
+            pass
+        try:
+            driver = self.neo4j_store._get_driver()
+            with driver.session() as session:
+                session.run("MATCH (n) DETACH DELETE n")
+        except Exception:
+            pass
         self.registry.clear_all()
 

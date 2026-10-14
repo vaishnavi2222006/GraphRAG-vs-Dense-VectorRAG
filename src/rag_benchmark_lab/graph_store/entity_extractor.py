@@ -26,7 +26,13 @@ def normalize_entity_name(name: str) -> str:
     return name
 
 
-def _heuristic_entities(text: str, entity_categories: list[str]) -> list[EntityRecord]:
+def _heuristic_entities(
+    text: str,
+    entity_categories: list[str],
+    document_id: str | None = None,
+    chunk_id: str | None = None,
+    page_number: int | None = None,
+) -> list[EntityRecord]:
     records: list[EntityRecord] = []
     seen: set[tuple[str, str]] = set()
     for match in ENTITY_PATTERN.findall(text):
@@ -43,12 +49,22 @@ def _heuristic_entities(text: str, entity_categories: list[str]) -> list[EntityR
                 original_mention=match,
                 entity_type=entity_type,
                 confidence=0.35,
+                document_id=document_id,
+                chunk_id=chunk_id,
+                page_number=page_number,
+                extraction_method="heuristic",
             )
         )
     return records
 
 
-def _heuristic_relationships(text: str, entities: list[EntityRecord]) -> list[RelationshipRecord]:
+def _heuristic_relationships(
+    text: str,
+    entities: list[EntityRecord],
+    document_id: str | None = None,
+    chunk_id: str | None = None,
+    page_number: int | None = None,
+) -> list[RelationshipRecord]:
     relationships: list[RelationshipRecord] = []
     if len(entities) < 2:
         return relationships
@@ -66,7 +82,11 @@ def _heuristic_relationships(text: str, entities: list[EntityRecord]) -> list[Re
                 target_entity_name=target.canonical_name,
                 relationship_type=term.upper().replace(" ", "_"),
                 confidence=0.25,
-                source_text=term,
+                source_document_id=document_id,
+                source_chunk_id=chunk_id,
+                page_number=page_number,
+                extraction_method="heuristic",
+                source_text=text[:300],
             )
         )
         break
@@ -152,7 +172,7 @@ class EntityRelationshipExtractor:
             result.raw_output = response.text
             return result
         except Exception:
-            entities = _heuristic_entities(text, self.entity_categories)
-            relationships = _heuristic_relationships(text, entities)
+            entities = _heuristic_entities(text, self.entity_categories, document_id=document_id, chunk_id=chunk_id, page_number=page_number)
+            relationships = _heuristic_relationships(text, entities, document_id=document_id, chunk_id=chunk_id, page_number=page_number)
             return ExtractionResult(entities=entities, relationships=relationships, used_fallback=True)
 

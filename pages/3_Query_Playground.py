@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 import pandas as pd
 import streamlit as st
 
@@ -21,11 +22,20 @@ if st.button("Run query") and question.strip():
     st.subheader("Answer")
     st.write(result.answer)
     st.write(f"Strategy: {result.selected_strategy.value} | Routing: {result.routing_rationale}")
-    st.write(f"Retrieval latency: {result.retrieval_latency_ms:.2f} ms | Generation latency: {result.generation_latency_ms:.2f} ms | Total: {result.total_latency_ms:.2f} ms")
+    ret_lat = f"{result.retrieval_latency_ms:.2f} ms" if result.retrieval_latency_ms is not None else "N/A"
+    gen_lat = f"{result.generation_latency_ms:.2f} ms" if result.generation_latency_ms is not None else "N/A"
+    tot_lat = f"{result.total_latency_ms:.2f} ms" if result.total_latency_ms is not None else "N/A"
+    st.write(f"Retrieval latency: {ret_lat} | Generation latency: {gen_lat} | Total: {tot_lat}")
     st.subheader("Citations")
-    st.dataframe(pd.DataFrame([citation.__dict__ for citation in result.citations]), use_container_width=True)
+    if result.citations:
+        st.dataframe(pd.DataFrame([asdict(citation) for citation in result.citations]), use_container_width=True)
+    else:
+        st.info("No citations for this response.")
     st.subheader("Retrieved Chunks")
-    st.dataframe(pd.DataFrame([chunk.__dict__ for chunk in result.retrieved_sources]), use_container_width=True)
+    if result.retrieved_sources:
+        st.dataframe(pd.DataFrame([asdict(chunk) for chunk in result.retrieved_sources]), use_container_width=True)
+    else:
+        st.info("No retrieved chunks.")
     if result.graph_evidence:
         st.subheader("Graph Evidence")
         st.write(f"Entities: {len(result.graph_evidence.entities)} | Relationships: {len(result.graph_evidence.relationships)}")

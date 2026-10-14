@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import datetime, timezone
 import hashlib
@@ -36,12 +37,16 @@ class BenchmarkRunner:
         self.result_store.save_run(run_id, summary_payload)
 
         per_strategy: dict[str, list[float]] = {strategy.value: [] for strategy in strategies}
+        per_strategy_metrics: dict[str, dict[str, list[float]]] = {strategy.value: defaultdict(list) for strategy in strategies}
         rows: list[dict] = []
         for example in examples:
             for strategy in strategies:
                 answer = self.query_service.answer(example.question, manual_strategy=strategy)
                 metrics = metric_bundle(answer, example.expected_answer, example.relevant_document_ids, example.reference_contexts)
                 per_strategy[strategy.value].append(answer.total_latency_ms or 0.0)
+                for m_name, m_val in metrics.items():
+                    if m_val.value is not None:
+                        per_strategy_metrics[strategy.value][m_name].append(m_val.value)
                 row = {
                     "run_id": run_id,
                     "query_id": example.query_id,
@@ -63,6 +68,10 @@ class BenchmarkRunner:
             strategy: {
                 "latency": latency_summary(latencies),
                 "queries": len(examples),
+                "metrics": {
+                    m_name: round(sum(m_vals) / len(m_vals), 4) if m_vals else None
+                    for m_name, m_vals in per_strategy_metrics[strategy].items()
+                },
             }
             for strategy, latencies in per_strategy.items()
         }

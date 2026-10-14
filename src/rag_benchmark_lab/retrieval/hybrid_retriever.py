@@ -50,14 +50,16 @@ class HybridRetriever:
             key=lambda chunk: (fusion_scores.get(chunk.chunk_id, 0.0), chunk.score),
             reverse=True,
         )
-        ranked_chunks = _dedupe_chunks(ranked_chunks)
+        for chunk in ranked_chunks:
+            chunk.metadata["rrf_score"] = fusion_scores.get(chunk.chunk_id, 0.0)
+
         if not graph_result.source_chunks:
             warnings.append("graph_retrieval_returned_no_source_chunks")
 
         return HybridRetrievalResult(
             chunks=ranked_chunks,
             vector_chunks=vector_result.chunks,
-            graph_evidence=graph_result,
+            graph_evidence=graph_result.evidence,
             fusion_scores=fusion_scores,
             retrieval_latency_ms=(perf_counter() - start) * 1000.0,
             warnings=warnings,

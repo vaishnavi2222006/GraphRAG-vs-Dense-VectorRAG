@@ -10,6 +10,13 @@
 - [x] Run dependency installation in a virtual environment
 - [x] Execute unit tests and fix failures
 - [x] Verify Streamlit app startup against installed dependencies
-- [ ] Validate Docker Compose services locally
-- [ ] Ingest sample data and run an initial benchmark
-- [x] Finalize README, methodology, and results templates
+- [x] Validate Docker Compose services locally (Qdrant & Neo4j containers running and healthy)
+- [x] Repair Qdrant Point ID format and client API incompatibility (`query_points` / `search`)
+- [x] Repair Neo4j Cypher hop parameterization and document cleanup
+- [x] Repair Reciprocal Rank Fusion order preservation in HybridRetriever
+- [x] Repair Streamlit dataclass serialization in Query Playground
+- [x] Ingest sample data into live Qdrant and Neo4j (`sample_doc_1.txt`, `sample_doc_2.txt`, `sample_doc_3.txt`)
+- [x] Run benchmark across Vector, Graph, and Hybrid RAG strategies against live services
+- [x] Finalize README, methodology, results templates, and audit documentation
+- [ ] (Optional) Install local Ollama and pull `llama3.1:8b-instruct-q4_K_M` when hardware resources permit
+- [ ] (Optional) Install `sentence-transformers` via `pip install -e .[ml]` when real neural embedding weights are desired

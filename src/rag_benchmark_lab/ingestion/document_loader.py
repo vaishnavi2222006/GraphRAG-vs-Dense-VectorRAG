@@ -9,7 +9,10 @@ import mimetypes
 from .text_cleaner import clean_text
 
 try:  # optional dependencies are loaded lazily so unit tests can run without them
-    import fitz  # type: ignore
+    try:
+        import pymupdf as fitz  # type: ignore
+    except ImportError:
+        import fitz  # type: ignore
 except Exception:  # pragma: no cover
     fitz = None
 

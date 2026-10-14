@@ -42,7 +42,9 @@ else:
         figure.add_trace(go.Scatter(x=[x0, x1], y=[y0, y1], mode="lines", line=dict(width=1, color="#999"), hoverinfo="none", showlegend=False))
     for entity_id in node_ids:
         x, y = node_positions[entity_id]
-        figure.add_trace(go.Scatter(x=[x], y=[y], mode="markers+text", text=[entity_lookup[entity_id]["canonical_name"]], textposition="top center", marker=dict(size=20), name=entity_lookup[entity_id]["entity_type"]))
+        cname = entity_lookup.get(entity_id, {}).get("canonical_name", entity_id)
+        etype = entity_lookup.get(entity_id, {}).get("entity_type", "Concept")
+        figure.add_trace(go.Scatter(x=[x], y=[y], mode="markers+text", text=[cname], textposition="top center", marker=dict(size=20), name=etype))
     figure.update_layout(height=600, margin=dict(l=20, r=20, t=20, b=20), showlegend=False)
     st.plotly_chart(figure, use_container_width=True)
     st.dataframe(pd.DataFrame(filtered_relationships), use_container_width=True)

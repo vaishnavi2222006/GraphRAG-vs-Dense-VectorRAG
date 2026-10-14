@@ -43,9 +43,13 @@ with action_cols[1]:
         warnings = context.document_service.delete_document(selected_document_id)
         st.warning("; ".join(warnings) if warnings else "Document deleted.")
 with action_cols[2]:
+    confirm_clear = st.checkbox("Confirm clear", key="confirm_clear_corpus")
     if st.button("Clear corpus"):
-        context.document_service.clear_corpus()
-        st.success("Corpus cleared.")
+        if confirm_clear:
+            context.document_service.clear_corpus()
+            st.success("Corpus cleared.")
+        else:
+            st.warning("Please check 'Confirm clear' before clearing the corpus.")
 
 if selected_document_id:
     st.subheader("Document Details")

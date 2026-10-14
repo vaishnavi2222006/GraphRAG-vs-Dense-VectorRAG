@@ -104,6 +104,14 @@ class Neo4jStore:
         driver = self._get_driver()
         with driver.session() as session:
             session.run(
+                "MATCH ()-[r:RELATED_TO]->() WHERE r.source_document_id = $document_id DELETE r",
+                document_id=document_id,
+            )
+            session.run(
+                "MATCH (e:Entity) WHERE e.document_id = $document_id DETACH DELETE e",
+                document_id=document_id,
+            )
+            session.run(
                 "MATCH (d:Document {document_id: $document_id}) DETACH DELETE d",
                 document_id=document_id,
             )
@@ -137,16 +145,36 @@ class Neo4jStore:
 
     def traverse(self, entity_ids: list[str], max_hops: int = 2, limit: int = 20) -> GraphEvidence:
         driver = self._get_driver()
+        safe_hops = max(1, min(int(max_hops), 5))
         query = (
-            "MATCH path = (start:Entity)-[rels:RELATED_TO*1..$max_hops]-(other:Entity) "
+            f"MATCH path = (start:Entity)-[rels:RELATED_TO*1..{safe_hops}]-(other:Entity) "
             "WHERE start.entity_id IN $entity_ids "
             "RETURN path LIMIT $limit"
+        )
+        seed_query = (
+            "MATCH (e:Entity) WHERE e.entity_id IN $entity_ids RETURN e"
         )
         entities: dict[str, EntityRecord] = {}
         relationships: dict[str, RelationshipRecord] = {}
         source_chunks: dict[str, RetrievedChunk] = {}
         with driver.session() as session:
-            results = session.run(query, entity_ids=entity_ids, max_hops=max_hops, limit=limit)
+            seed_results = session.run(seed_query, entity_ids=entity_ids)
+            for record in seed_results:
+                node = record["e"]
+                entity_id = node.get("entity_id")
+                if entity_id:
+                    entities[entity_id] = EntityRecord(
+                        entity_id=entity_id,
+                        canonical_name=node.get("canonical_name", ""),
+                        original_mention=node.get("original_mention", node.get("canonical_name", "")),
+                        entity_type=node.get("entity_type", "Concept"),
+                        confidence=node.get("confidence"),
+                        document_id=node.get("document_id"),
+                        chunk_id=node.get("chunk_id"),
+                        page_number=node.get("page_number"),
+                        extraction_method=node.get("extraction_method", "llm"),
+                    )
+            results = session.run(query, entity_ids=entity_ids, limit=limit)
             for record in results:
                 path = record["path"]
                 for node in path.nodes:

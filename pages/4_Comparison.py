@@ -19,5 +19,6 @@ if st.button("Compare strategies") and question.strip():
             result = results[strategy]
             st.subheader(strategy)
             st.write(result.answer)
-            st.write(f"Total latency: {result.total_latency_ms:.2f} ms")
+            tot_lat = f"{result.total_latency_ms:.2f} ms" if result.total_latency_ms is not None else "N/A"
+            st.write(f"Total latency: {tot_lat}")
             st.write(f"Retrieved chunks: {len(result.retrieved_sources)}")

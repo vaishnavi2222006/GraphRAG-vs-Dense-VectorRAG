@@ -34,28 +34,40 @@ def token_f1(prediction: str, reference: str | None) -> MetricResult:
     return MetricResult(name="token_f1", value=2 * precision * recall / (precision + recall))
 
 
+def _normalize_doc_ref(val: str) -> str:
+    return val.lower().replace("-", "_").removesuffix(".txt").removesuffix(".pdf").removesuffix(".docx").strip()
+
+
 def retrieval_recall_at_k(retrieved: list[RetrievedChunk], relevant_document_ids: list[str] | None) -> MetricResult:
     if not relevant_document_ids:
         return MetricResult(name="retrieval_recall_at_k", value=None, available=False, details={"reason": "missing_relevant_document_ids"})
-    retrieved_documents = {chunk.document_id for chunk in retrieved}
-    hits = len(retrieved_documents.intersection(relevant_document_ids))
-    return MetricResult(name="retrieval_recall_at_k", value=hits / len(set(relevant_document_ids)))
+    raw_relevant = set(relevant_document_ids)
+    norm_relevant = {_normalize_doc_ref(r) for r in relevant_document_ids}
+    matched_relevant = set()
+    for chunk in retrieved:
+        for r in relevant_document_ids:
+            if chunk.document_id == r or chunk.document_name == r or _normalize_doc_ref(chunk.document_id) == _normalize_doc_ref(r) or _normalize_doc_ref(chunk.document_name) == _normalize_doc_ref(r):
+                matched_relevant.add(r)
+    return MetricResult(name="retrieval_recall_at_k", value=len(matched_relevant) / len(raw_relevant))
 
 
 def hit_rate_at_k(retrieved: list[RetrievedChunk], relevant_document_ids: list[str] | None) -> MetricResult:
     if not relevant_document_ids:
         return MetricResult(name="hit_rate_at_k", value=None, available=False, details={"reason": "missing_relevant_document_ids"})
-    retrieved_documents = {chunk.document_id for chunk in retrieved}
-    return MetricResult(name="hit_rate_at_k", value=float(bool(retrieved_documents.intersection(relevant_document_ids))))
+    for chunk in retrieved:
+        for r in relevant_document_ids:
+            if chunk.document_id == r or chunk.document_name == r or _normalize_doc_ref(chunk.document_id) == _normalize_doc_ref(r) or _normalize_doc_ref(chunk.document_name) == _normalize_doc_ref(r):
+                return MetricResult(name="hit_rate_at_k", value=1.0)
+    return MetricResult(name="hit_rate_at_k", value=0.0)
 
 
 def mean_reciprocal_rank(retrieved: list[RetrievedChunk], relevant_document_ids: list[str] | None) -> MetricResult:
     if not relevant_document_ids:
         return MetricResult(name="mrr", value=None, available=False, details={"reason": "missing_relevant_document_ids"})
-    relevant = set(relevant_document_ids)
     for index, chunk in enumerate(retrieved, start=1):
-        if chunk.document_id in relevant:
-            return MetricResult(name="mrr", value=1.0 / index)
+        for r in relevant_document_ids:
+            if chunk.document_id == r or chunk.document_name == r or _normalize_doc_ref(chunk.document_id) == _normalize_doc_ref(r) or _normalize_doc_ref(chunk.document_name) == _normalize_doc_ref(r):
+                return MetricResult(name="mrr", value=1.0 / index)
     return MetricResult(name="mrr", value=0.0)
 
 

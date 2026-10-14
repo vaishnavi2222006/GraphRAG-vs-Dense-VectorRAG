@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from time import perf_counter
 
@@ -19,7 +19,7 @@ class LLMResponse:
     total_tokens: int | None = None
     latency_ms: float | None = None
     mock_mode: bool = False
-    warnings: list[str] = None
+    warnings: list[str] = field(default_factory=list)
 
 
 class OllamaLLMService:
@@ -43,7 +43,7 @@ class OllamaLLMService:
             "This response should not be used as a real experiment result.\n\n"
             f"Prompt preview: {prompt[:180]}"
         )
-        return LLMResponse(text=text, model_name=self.model_name, mock_mode=True, warnings=["mock_mode"])
+        return LLMResponse(text=text, model_name=self.model_name, latency_ms=1.0, mock_mode=True, warnings=["mock_mode"])
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(1))
     def complete(self, prompt: str, system_prompt: str | None = None, temperature: float = 0.0) -> LLMResponse:
