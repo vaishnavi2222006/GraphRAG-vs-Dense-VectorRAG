@@ -1,0 +1,3 @@
+GraphRAG becomes useful when a question requires relationships between entities across multiple documents.
+Dense Vector RAG is often sufficient for direct factual lookup and semantic similarity.
+The router can select VECTOR, GRAPH, HYBRID, or ALL depending on the query.

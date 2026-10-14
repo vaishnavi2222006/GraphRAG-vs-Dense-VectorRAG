@@ -1,0 +1,3 @@
+Ollama provides local language model inference for answer generation.
+When Ollama is unavailable, the project supports a clearly labeled mock mode for testing.
+The evaluation pipeline records latency, retrieval quality, and persisted benchmark outputs.

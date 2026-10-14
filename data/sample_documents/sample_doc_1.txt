@@ -1,0 +1,3 @@
+RAG Benchmark Lab uses document ingestion, embedding generation, Qdrant vector search, and Neo4j graph storage.
+The ingestion pipeline validates files, chunks content, and preserves provenance metadata.
+Hybrid RAG combines vector retrieval and graph traversal using reciprocal rank fusion.
