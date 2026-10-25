@@ -71,10 +71,11 @@ flowchart LR
 ## Installation
 
 1. Create and activate a virtual environment.
-2. Install dependencies with `pip install -e .`.
-3. Copy `.env.example` to `.env` and adjust credentials if needed.
-4. Start Qdrant and Neo4j with Docker Compose.
-5. Start Ollama on the host and pull the configured model.
+2. Install the base application with `pip install -e .`.
+3. Install the embedding stack when you want real Sentence Transformer embeddings with `pip install -e .[ml]`.
+4. Copy `.env.example` to `.env` and adjust credentials if needed.
+5. Start Qdrant and Neo4j with Docker Compose.
+6. Start Ollama on the host and pull the configured model.
 
 ## Docker Setup
 
@@ -97,6 +98,7 @@ Sample synthetic documents live in `data/sample_documents/` and the sample evalu
 ## Notes
 
 - Ollama is optional for initial testing because the project can run in mock generation mode.
+- The base install uses mock embeddings when Sentence Transformers is not installed.
 - Vector and graph backends are required for full ingestion and retrieval experiments.
 
 ## Limitations

@@ -26,6 +26,7 @@ class BenchmarkRunner:
     def run(self, examples: list[EvaluationExample], strategies: list[RetrievalStrategy] | None = None) -> dict:
         strategies = strategies or [RetrievalStrategy.VECTOR, RetrievalStrategy.GRAPH, RetrievalStrategy.HYBRID]
         run_id = str(uuid.uuid4())
+        mock_mode_flag = getattr(getattr(self.query_service, "llm_service", None), "mock_mode", False)
         summary_payload = {
             "run_id": run_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -33,6 +34,7 @@ class BenchmarkRunner:
             "dataset_hash": dataset_hash(examples),
             "strategies": [strategy.value for strategy in strategies],
             "total_queries": len(examples),
+            "mock_mode": mock_mode_flag,
         }
         self.result_store.save_run(run_id, summary_payload)
 
@@ -42,7 +44,7 @@ class BenchmarkRunner:
         for example in examples:
             for strategy in strategies:
                 answer = self.query_service.answer(example.question, manual_strategy=strategy)
-                metrics = metric_bundle(answer, example.expected_answer, example.relevant_document_ids, example.reference_contexts)
+                metrics = metric_bundle(answer, example.expected_answer, example.relevant_document_ids, example.reference_contexts, question=example.question)
                 per_strategy[strategy.value].append(answer.total_latency_ms or 0.0)
                 for m_name, m_val in metrics.items():
                     if m_val.value is not None:
@@ -58,6 +60,7 @@ class BenchmarkRunner:
                     "generation_latency_ms": answer.generation_latency_ms,
                     "total_latency_ms": answer.total_latency_ms,
                     "metrics": {name: asdict(metric) for name, metric in metrics.items()},
+                    "mock_mode": mock_mode_flag,
                     "warnings": answer.warnings,
                     "errors": answer.errors,
                 }

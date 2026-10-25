@@ -17,6 +17,12 @@ def context():
 
 
 def test_end_to_end_ingestion_and_retrieval_flow(context) -> None:
+    try:
+        context.qdrant_store.health()
+        context.neo4j_store.health()
+    except Exception as exc:
+        pytest.skip(f"Live Qdrant/Neo4j services required for live end-to-end test: {exc}")
+
     # 1. Ingest test document
     doc_text = "Vector embeddings capture semantic similarity. Graph structures capture entities and relational dependencies between concepts. GraphRAG connects entities."
     outcome = context.document_service.ingest_bytes("test_e2e_doc.txt", doc_text.encode("utf-8"))

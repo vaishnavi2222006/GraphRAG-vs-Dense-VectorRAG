@@ -23,6 +23,7 @@ src/rag_benchmark_lab/graph_store/__init__.py
 src/rag_benchmark_lab/graph_store/entity_extractor.py
 src/rag_benchmark_lab/graph_store/graph_retriever.py
 src/rag_benchmark_lab/graph_store/neo4j_store.py
+src/rag_benchmark_lab/graph_store/networkx_store.py
 src/rag_benchmark_lab/graph_store/relationship_extractor.py
 src/rag_benchmark_lab/ingestion/__init__.py
 src/rag_benchmark_lab/ingestion/chunker.py

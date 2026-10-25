@@ -166,9 +166,18 @@ class DocumentService:
         except Exception:
             pass
         try:
-            driver = self.neo4j_store._get_driver()
-            with driver.session() as session:
-                session.run("MATCH (n) DETACH DELETE n")
+            # Works with both NetworkXStore and Neo4jStore via duck typing
+            if hasattr(self.neo4j_store, "_graph"):
+                # NetworkXStore
+                import networkx as nx
+                self.neo4j_store._graph = nx.DiGraph()
+                self.neo4j_store._entities.clear()
+                self.neo4j_store._relationships.clear()
+            else:
+                # Neo4jStore
+                driver = self.neo4j_store._get_driver()
+                with driver.session() as session:
+                    session.run("MATCH (n) DETACH DELETE n")
         except Exception:
             pass
         self.registry.clear_all()

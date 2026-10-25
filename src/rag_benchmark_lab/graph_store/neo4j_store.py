@@ -227,3 +227,80 @@ class Neo4jStore:
                         )
         return GraphEvidence(entities=list(entities.values()), relationships=list(relationships.values()), source_chunks=list(source_chunks.values()))
 
+    def count_entities(self) -> int:
+        try:
+            driver = self._get_driver()
+            with driver.session() as session:
+                rec = session.run("MATCH (e:Entity) RETURN count(e) AS cnt").single()
+                return int(rec["cnt"]) if rec else 0
+        except Exception:
+            return 0
+
+    def count_relationships(self) -> int:
+        try:
+            driver = self._get_driver()
+            with driver.session() as session:
+                rec = session.run("MATCH ()-[r:RELATED_TO]->() RETURN count(r) AS cnt").single()
+                return int(rec["cnt"]) if rec else 0
+        except Exception:
+            return 0
+
+    def count_documents(self) -> int:
+        try:
+            driver = self._get_driver()
+            with driver.session() as session:
+                rec = session.run("MATCH (d:Document) RETURN count(d) AS cnt").single()
+                return int(rec["cnt"]) if rec else 0
+        except Exception:
+            return 0
+
+    def list_entities(self, entity_type: str | None = None, search: str | None = None, limit: int = 150) -> list[dict]:
+        try:
+            driver = self._get_driver()
+            clauses = ["MATCH (e:Entity)"]
+            where = []
+            params: dict[str, object] = {"limit": limit}
+            if entity_type and entity_type != "All":
+                where.append("e.entity_type = $entity_type")
+                params["entity_type"] = entity_type
+            if search and search.strip():
+                where.append("toLower(e.canonical_name) CONTAINS toLower($search)")
+                params["search"] = search.strip()
+            if where:
+                clauses.append("WHERE " + " AND ".join(where))
+            clauses.append("RETURN e.entity_id AS entity_id, e.canonical_name AS canonical_name, e.entity_type AS entity_type, e.confidence AS confidence, e.document_id AS document_id, e.chunk_id AS chunk_id, e.page_number AS page_number, e.extraction_method AS extraction_method ORDER BY e.canonical_name ASC LIMIT $limit")
+            query = " ".join(clauses)
+            with driver.session() as session:
+                results = session.run(query, **params)
+                return [dict(record) for record in results]
+        except Exception:
+            return []
+
+    def list_relationships(self, relationship_type: str | None = None, entity_id: str | None = None, limit: int = 250) -> list[dict]:
+        try:
+            driver = self._get_driver()
+            clauses = ["MATCH (source:Entity)-[r:RELATED_TO]->(target:Entity)"]
+            where = []
+            params: dict[str, object] = {"limit": limit}
+            if relationship_type and relationship_type != "All":
+                where.append("r.relationship_type = $rel_type")
+                params["rel_type"] = relationship_type
+            if entity_id:
+                where.append("(source.entity_id = $entity_id OR target.entity_id = $entity_id)")
+                params["entity_id"] = entity_id
+            if where:
+                clauses.append("WHERE " + " AND ".join(where))
+            clauses.append("RETURN r.relationship_id AS relationship_id, source.entity_id AS source_entity_id, source.canonical_name AS source_entity_name, target.entity_id AS target_entity_id, target.canonical_name AS target_entity_name, r.relationship_type AS relationship_type, r.confidence AS confidence, r.source_document_id AS source_document_id, r.source_chunk_id AS source_chunk_id, r.page_number AS page_number, r.extraction_method AS extraction_method, r.source_text AS source_text ORDER BY r.relationship_type ASC LIMIT $limit")
+            query = " ".join(clauses)
+            with driver.session() as session:
+                results = session.run(query, **params)
+                return [dict(record) for record in results]
+        except Exception:
+            return []
+
+    def clear_graph(self) -> None:
+        driver = self._get_driver()
+        with driver.session() as session:
+            session.run("MATCH (n) DETACH DELETE n")
+
+

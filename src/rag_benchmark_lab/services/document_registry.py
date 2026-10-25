@@ -10,8 +10,8 @@ from ..schemas.documents import ChunkRecord, DocumentRecord, DocumentStatus, Ent
 
 
 class DocumentRegistry:
-    def __init__(self, sqlite_path: Path) -> None:
-        self.sqlite_path = sqlite_path
+    def __init__(self, sqlite_path: Path | str) -> None:
+        self.sqlite_path = Path(sqlite_path)
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:

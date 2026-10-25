@@ -93,6 +93,33 @@ def context_recall(retrieved_contexts: list[str], reference_contexts: list[str] 
     return MetricResult(name="context_recall", value=overlap / max(1, len(set(joined_reference.split()))))
 
 
+def faithfulness(prediction: str, retrieved_contexts: list[str]) -> MetricResult:
+    if not retrieved_contexts:
+        return MetricResult(name="faithfulness", value=0.0, available=True, details={"reason": "no_retrieved_contexts"})
+    pred_clean = _normalize(prediction)
+    if not pred_clean:
+        return MetricResult(name="faithfulness", value=0.0)
+    if "[development" in pred_clean:
+        pred_clean = pred_clean.split("offline]", 1)[-1].strip()
+    context_tokens = set(" ".join(_normalize(t) for t in retrieved_contexts).split())
+    content_tokens = [t for t in pred_clean.split() if len(t) > 3]
+    if not content_tokens:
+        return MetricResult(name="faithfulness", value=1.0)
+    grounded = sum(1 for t in content_tokens if t in context_tokens)
+    score = round(min(1.0, grounded / len(content_tokens)), 4)
+    return MetricResult(name="faithfulness", value=score)
+
+
+def answer_relevancy(question: str, prediction: str) -> MetricResult:
+    q_tokens = set(t for t in _normalize(question).split() if len(t) > 3)
+    if not q_tokens:
+        return MetricResult(name="answer_relevancy", value=1.0)
+    pred_tokens = set(_normalize(prediction).split())
+    overlap = len(q_tokens & pred_tokens)
+    score = round(min(1.0, overlap / len(q_tokens)), 4)
+    return MetricResult(name="answer_relevancy", value=score)
+
+
 def latency_summary(latencies_ms: list[float]) -> dict[str, float | None]:
     if not latencies_ms:
         return {"mean": None, "median": None, "p95": None}
@@ -105,9 +132,17 @@ def latency_summary(latencies_ms: list[float]) -> dict[str, float | None]:
     }
 
 
-def metric_bundle(answer: AnswerResult, reference_answer: str | None, relevant_document_ids: list[str] | None, reference_contexts: list[str] | None) -> dict[str, MetricResult]:
+def metric_bundle(
+    answer: AnswerResult,
+    reference_answer: str | None,
+    relevant_document_ids: list[str] | None,
+    reference_contexts: list[str] | None,
+    question: str | None = None,
+) -> dict[str, MetricResult]:
     retrieved_texts = [chunk.text for chunk in answer.retrieved_sources]
     return {
+        "faithfulness": faithfulness(answer.answer, retrieved_texts),
+        "answer_relevancy": answer_relevancy(question or "", answer.answer),
         "exact_match": exact_match(answer.answer, reference_answer),
         "token_f1": token_f1(answer.answer, reference_answer),
         "retrieval_recall_at_k": retrieval_recall_at_k(answer.retrieved_sources, relevant_document_ids),
@@ -116,4 +151,5 @@ def metric_bundle(answer: AnswerResult, reference_answer: str | None, relevant_d
         "context_precision": context_precision(retrieved_texts, reference_contexts),
         "context_recall": context_recall(retrieved_texts, reference_contexts),
     }
+
 

@@ -1,0 +1,35 @@
+[
+  {
+    "query_id": "bench-factual-01",
+    "question": "What is the primary embedding dimensionality and distance metric used for Dense Vector RAG in Qdrant?",
+    "expected_answer": "Dense Vector RAG uses 384-dimensional dense vectors with cosine similarity distance metric in Qdrant.",
+    "query_type": "factual",
+    "difficulty": "easy",
+    "expected_reasoning_hops": 1,
+    "reference_contexts": [
+      "Vector embeddings are generated using sentence-transformers (all-MiniLM-L6-v2) producing 384-dimensional vectors stored in Qdrant using cosine distance."
+    ]
+  },
+  {
+    "query_id": "bench-multihop-02",
+    "question": "How does GraphRAG use Neo4j entity relationships to resolve multi-hop queries across connected documents?",
+    "expected_answer": "GraphRAG extracts named entities and directional relationships, queries Neo4j via Cypher for multi-hop neighbor traversal, and links retrieved entities back to source text chunks.",
+    "query_type": "multi-hop",
+    "difficulty": "medium",
+    "expected_reasoning_hops": 2,
+    "reference_contexts": [
+      "Neo4j stores Document, Chunk, and Entity nodes with HAS_CHUNK, MENTIONS, and RELATES_TO edges, enabling Cypher-based bounded multi-hop graph traversals."
+    ]
+  },
+  {
+    "query_id": "bench-hybrid-03",
+    "question": "Why does Hybrid RAG apply Reciprocal Rank Fusion (RRF) rather than simple linear score combination?",
+    "expected_answer": "Reciprocal Rank Fusion standardizes disparate score distributions between vector similarity and graph connectivity, preventing vector scores from dominating graph structural signals.",
+    "query_type": "comparative",
+    "difficulty": "hard",
+    "expected_reasoning_hops": 2,
+    "reference_contexts": [
+      "Reciprocal Rank Fusion (RRF) computes RRF_score(d) = sum(1 / (k + rank(d))) with k=60, fusing dense semantic candidates and graph paths without needing arbitrary score calibration."
+    ]
+  }
+]

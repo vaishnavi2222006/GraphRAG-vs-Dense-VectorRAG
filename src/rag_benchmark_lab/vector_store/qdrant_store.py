@@ -34,7 +34,11 @@ class QdrantStore:
             return self._client
         if QdrantClient is None:
             raise ServiceUnavailableError("qdrant-client is not installed")
-        self._client = QdrantClient(url=self.url, api_key=self.api_key, check_compatibility=False)
+        if self.url in (":memory:", "memory", ":local:"):
+            # Fully in-memory mode — no network connection needed
+            self._client = QdrantClient(":memory:")
+        else:
+            self._client = QdrantClient(url=self.url, api_key=self.api_key, check_compatibility=False)
         return self._client
 
     def close(self) -> None:
@@ -47,6 +51,16 @@ class QdrantStore:
         client = self._get_client()
         client.get_collections()
         return True
+
+    def count(self) -> int:
+        try:
+            client = self._get_client()
+            if not client.collection_exists(self.collection_name):
+                return 0
+            info = client.get_collection(self.collection_name)
+            return int(info.points_count or 0)
+        except Exception:
+            return 0
 
     def ensure_collection(self, vector_size: int) -> None:
         client = self._get_client()
@@ -85,26 +99,35 @@ class QdrantStore:
 
     def search(self, vector: list[float], top_k: int, document_ids: list[str] | None = None) -> list[RetrievedChunk]:
         client = self._get_client()
+        # If collection does not exist yet (no documents ingested), return empty results
+        try:
+            if not client.collection_exists(self.collection_name):
+                return []
+        except Exception:
+            return []
         filter_ = None
         if document_ids and qmodels is not None:
             filter_ = qmodels.Filter(
                 must=[qmodels.FieldCondition(key="document_id", match=qmodels.MatchAny(any=document_ids))]
             )
-        if hasattr(client, "query_points"):
-            response = client.query_points(
-                collection_name=self.collection_name,
-                query=vector,
-                limit=top_k,
-                query_filter=filter_,
-            )
-            results = response.points
-        else:
-            results = client.search(
-                collection_name=self.collection_name,
-                query_vector=vector,
-                limit=top_k,
-                query_filter=filter_,
-            )
+        try:
+            if hasattr(client, "query_points"):
+                response = client.query_points(
+                    collection_name=self.collection_name,
+                    query=vector,
+                    limit=top_k,
+                    query_filter=filter_,
+                )
+                results = response.points
+            else:
+                results = client.search(
+                    collection_name=self.collection_name,
+                    query_vector=vector,
+                    limit=top_k,
+                    query_filter=filter_,
+                )
+        except Exception:
+            return []
         retrieved: list[RetrievedChunk] = []
         for result in results:
             payload = result.payload or {}
