@@ -12,4 +12,4 @@ COPY pages /app/pages
 
 RUN pip install --no-cache-dir --upgrade pip && pip install --no-cache-dir -e .
 
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501"]
+CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0"]
