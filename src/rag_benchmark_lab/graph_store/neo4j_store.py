@@ -44,11 +44,52 @@ class Neo4jStore:
         statements = [
             "CREATE CONSTRAINT entity_id_unique IF NOT EXISTS FOR (e:Entity) REQUIRE e.entity_id IS UNIQUE",
             "CREATE CONSTRAINT document_id_unique IF NOT EXISTS FOR (d:Document) REQUIRE d.document_id IS UNIQUE",
+            "CREATE CONSTRAINT chunk_id_unique IF NOT EXISTS FOR (c:Chunk) REQUIRE c.chunk_id IS UNIQUE",
             "CREATE CONSTRAINT relationship_id_unique IF NOT EXISTS FOR ()-[r:RELATED_TO]-() REQUIRE r.relationship_id IS UNIQUE",
         ]
         with driver.session() as session:
             for statement in statements:
                 session.run(statement)
+
+    def upsert_chunks(self, chunks: list[object]) -> None:
+        if not chunks:
+            return
+        driver = self._get_driver()
+        raw_chunks = []
+        for c in chunks:
+            d = asdict(c) if hasattr(c, "__dataclass_fields__") else dict(c)
+            raw_chunks.append({
+                "chunk_id": str(d.get("chunk_id")),
+                "document_id": str(d.get("document_id") or ""),
+                "document_name": str(d.get("document_name") or ""),
+                "chunk_index": int(d.get("chunk_index") or 0),
+                "text": str(d.get("text") or ""),
+                "page_number": d.get("page_number"),
+            })
+        query = (
+            "UNWIND $chunks AS chunk "
+            "MERGE (c:Chunk {chunk_id: chunk.chunk_id}) "
+            "SET c.document_id = chunk.document_id, "
+            "    c.document_name = chunk.document_name, "
+            "    c.chunk_index = chunk.chunk_index, "
+            "    c.text = chunk.text, "
+            "    c.page_number = chunk.page_number, "
+            "    c.updated_at = datetime()"
+        )
+        with driver.session() as session:
+            session.run(query, chunks=raw_chunks)
+
+    def get_chunk(self, chunk_id: str) -> dict | None:
+        driver = self._get_driver()
+        query = "MATCH (c:Chunk {chunk_id: $chunk_id}) RETURN c LIMIT 1"
+        try:
+            with driver.session() as session:
+                rec = session.run(query, chunk_id=chunk_id).single()
+                if rec:
+                    return dict(rec["c"])
+        except Exception:
+            pass
+        return None
 
     def upsert_entities(self, entities: list[EntityRecord]) -> None:
         if not entities:
@@ -65,6 +106,12 @@ class Neo4jStore:
             "    e.chunk_id = entity.chunk_id, "
             "    e.page_number = entity.page_number, "
             "    e.extraction_method = entity.extraction_method, "
+            "    e.document_ids = CASE WHEN e.document_ids IS NULL THEN [entity.document_id] "
+            "                          WHEN NOT entity.document_id IN e.document_ids THEN e.document_ids + entity.document_id "
+            "                          ELSE e.document_ids END, "
+            "    e.chunk_ids = CASE WHEN e.chunk_ids IS NULL THEN [entity.chunk_id] "
+            "                       WHEN NOT entity.chunk_id IN e.chunk_ids THEN e.chunk_ids + entity.chunk_id "
+            "                       ELSE e.chunk_ids END, "
             "    e.updated_at = datetime()"
         )
         with driver.session() as session:
@@ -108,7 +155,14 @@ class Neo4jStore:
                 document_id=document_id,
             )
             session.run(
-                "MATCH (e:Entity) WHERE e.document_id = $document_id DETACH DELETE e",
+                "MATCH (e:Entity) WHERE e.document_id = $document_id OR $document_id IN e.document_ids "
+                "SET e.document_ids = [doc IN e.document_ids WHERE doc <> $document_id] "
+                "WITH e WHERE size(coalesce(e.document_ids, [])) = 0 AND (e.document_id = $document_id OR e.document_id IS NULL) "
+                "DETACH DELETE e",
+                document_id=document_id,
+            )
+            session.run(
+                "MATCH (c:Chunk {document_id: $document_id}) DETACH DELETE c",
                 document_id=document_id,
             )
             session.run(
@@ -116,15 +170,26 @@ class Neo4jStore:
                 document_id=document_id,
             )
 
-    def search_entities(self, terms: list[str], limit: int = 10) -> list[EntityRecord]:
+    def search_entities(self, terms: list[str], limit: int = 10, document_ids: list[str] | None = None) -> list[EntityRecord]:
+        if document_ids is not None and len(document_ids) == 0:
+            return []
         driver = self._get_driver()
+        doc_filter_clause = ""
+        if document_ids is not None:
+            doc_filter_clause = "AND (e.document_id IN $document_ids OR any(doc IN e.document_ids WHERE doc IN $document_ids)) "
+
         query = (
-            "MATCH (e:Entity) "
-            "WHERE any(term IN $terms WHERE toLower(e.canonical_name) CONTAINS term OR toLower(e.original_mention) CONTAINS term) "
-            "RETURN e ORDER BY coalesce(e.confidence, 0) DESC, e.canonical_name ASC LIMIT $limit"
+            f"MATCH (e:Entity) "
+            f"WHERE any(term IN $terms WHERE toLower(e.canonical_name) CONTAINS term OR toLower(e.original_mention) CONTAINS term) "
+            f"{doc_filter_clause}"
+            f"RETURN e ORDER BY coalesce(e.confidence, 0) DESC, e.canonical_name ASC LIMIT $limit"
         )
+        params: dict = {"terms": [term.lower() for term in terms if term], "limit": limit}
+        if document_ids is not None:
+            params["document_ids"] = document_ids
+
         with driver.session() as session:
-            results = session.run(query, terms=[term.lower() for term in terms if term], limit=limit)
+            results = session.run(query, **params)
             records: list[EntityRecord] = []
             for record in results:
                 entity = record["e"]
@@ -143,22 +208,35 @@ class Neo4jStore:
                 )
             return records
 
-    def traverse(self, entity_ids: list[str], max_hops: int = 2, limit: int = 20) -> GraphEvidence:
+    def traverse(self, entity_ids: list[str], max_hops: int = 2, limit: int = 20, document_ids: list[str] | None = None) -> GraphEvidence:
+        if document_ids is not None and len(document_ids) == 0:
+            return GraphEvidence(entities=[], relationships=[], source_chunks=[])
         driver = self._get_driver()
         safe_hops = max(1, min(int(max_hops), 5))
+
+        seed_doc_clause = ""
+        traverse_doc_clause = ""
+        if document_ids is not None:
+            seed_doc_clause = "AND (e.document_id IN $document_ids OR any(doc IN e.document_ids WHERE doc IN $document_ids)) "
+            traverse_doc_clause = "AND all(r IN rels WHERE r.source_document_id IN $document_ids) "
+
         query = (
             f"MATCH path = (start:Entity)-[rels:RELATED_TO*1..{safe_hops}]-(other:Entity) "
-            "WHERE start.entity_id IN $entity_ids "
-            "RETURN path LIMIT $limit"
+            f"WHERE start.entity_id IN $entity_ids {traverse_doc_clause}"
+            f"RETURN path LIMIT $limit"
         )
         seed_query = (
-            "MATCH (e:Entity) WHERE e.entity_id IN $entity_ids RETURN e"
+            f"MATCH (e:Entity) WHERE e.entity_id IN $entity_ids {seed_doc_clause}RETURN e"
         )
+        params: dict = {"entity_ids": entity_ids, "limit": limit}
+        if document_ids is not None:
+            params["document_ids"] = document_ids
+
         entities: dict[str, EntityRecord] = {}
         relationships: dict[str, RelationshipRecord] = {}
         source_chunks: dict[str, RetrievedChunk] = {}
         with driver.session() as session:
-            seed_results = session.run(seed_query, entity_ids=entity_ids)
+            seed_results = session.run(seed_query, **params)
             for record in seed_results:
                 node = record["e"]
                 entity_id = node.get("entity_id")
@@ -174,7 +252,7 @@ class Neo4jStore:
                         page_number=node.get("page_number"),
                         extraction_method=node.get("extraction_method", "llm"),
                     )
-            results = session.run(query, entity_ids=entity_ids, limit=limit)
+            results = session.run(query, **params)
             for record in results:
                 path = record["path"]
                 for node in path.nodes:
@@ -221,10 +299,50 @@ class Neo4jStore:
                             document_name=str(relationship.get("source_document_id") or ""),
                             chunk_index=0,
                             text=str(relationship.get("source_text") or ""),
-                            score=float(relationship.get("confidence") or 0.0),
+                            score=float(relationship.get("confidence") or 0.8),
                             page_number=relationship.get("page_number"),
                             metadata={"relationship_type": relationship.get("relationship_type", "RELATED_TO")},
                         )
+
+            # Collect chunks from entities in the traversed graph
+            doc_id_set = set(document_ids) if document_ids is not None else None
+            for ent_node in entities.values():
+                c_id = getattr(ent_node, "chunk_id", None)
+                if c_id and c_id not in source_chunks:
+                    if doc_id_set is None or ent_node.document_id in doc_id_set:
+                        source_chunks[c_id] = RetrievedChunk(
+                            chunk_id=c_id,
+                            document_id=str(ent_node.document_id or ""),
+                            document_name=str(ent_node.document_id or ""),
+                            chunk_index=0,
+                            text=str(ent_node.canonical_name or ""),
+                            score=float(ent_node.confidence or 0.7),
+                            page_number=ent_node.page_number,
+                            metadata={"entity_name": ent_node.canonical_name, "entity_type": ent_node.entity_type},
+                        )
+
+            # Hydrate chunks directly from Chunk nodes in Neo4j if they exist
+            chunk_ids_to_hydrate = list(source_chunks.keys())
+            if chunk_ids_to_hydrate:
+                try:
+                    chunk_query = "MATCH (c:Chunk) WHERE c.chunk_id IN $cids RETURN c"
+                    chunk_results = session.run(chunk_query, cids=chunk_ids_to_hydrate)
+                    for rec in chunk_results:
+                        c_node = rec["c"]
+                        cid = c_node.get("chunk_id")
+                        if cid in source_chunks:
+                            chunk_obj = source_chunks[cid]
+                            if c_node.get("text"):
+                                chunk_obj.text = c_node.get("text")
+                            if c_node.get("document_name"):
+                                chunk_obj.document_name = c_node.get("document_name")
+                            if c_node.get("chunk_index") is not None:
+                                chunk_obj.chunk_index = int(c_node.get("chunk_index"))
+                            if c_node.get("page_number") is not None:
+                                chunk_obj.page_number = c_node.get("page_number")
+                except Exception:
+                    pass
+
         return GraphEvidence(entities=list(entities.values()), relationships=list(relationships.values()), source_chunks=list(source_chunks.values()))
 
     def count_entities(self) -> int:

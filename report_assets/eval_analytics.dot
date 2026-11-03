@@ -1,0 +1,45 @@
+
+digraph EvalAnalytics {
+    rankdir=TB;
+    node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9];
+
+    subgraph cluster_eval {
+        label = "Empirical Evaluation Lab & Interactive Analytics (Pages 6 & 7)";
+        style=filled;
+        color="#94a3b8";
+        fillcolor="#f8fafc";
+        fontname="Helvetica-Bold";
+
+        Config [label="Benchmark Configuration:
+Dataset: Domain Evaluation Benchmark (50 Queries)
+Query Types: 25 Simple Factual, 25 Multi-Hop Relational
+Strategies: Vector RAG, GraphRAG, Hybrid RRF", fillcolor="#ffffff", color="#3b82f6"];
+        
+        Metrics [label="Automated Metric Scoring Engine:
+Faithfulness (Grounding) | Context Precision | Context Recall
+Recall@K (k=3, 5, 10) | Hit Rate@K | Mean Reciprocal Rank (MRR)", fillcolor="#e0e7ff", color="#4338ca"];
+        
+        subgraph cluster_charts {
+            label = "Plotly Interactive Visualizations";
+            style=filled;
+            color="#e2e8f0";
+            fillcolor="#ffffff";
+            
+            Chart1 [label="Bar Chart:
+Context Recall by Strategy
+Vector: 0.71 | Graph: 0.83 | Hybrid: 0.94", fillcolor="#f0fdf4", color="#15803d"];
+            Chart2 [label="Scatter Plot:
+Latency vs. Faithfulness Tradeoff
+Shows Hybrid achieves Pareto-optimal quality", fillcolor="#fefce8", color="#ca8a04"];
+        }
+
+        Export [label="One-Click CSV Research Telemetry Export
+(run_id, query_id, strategy, latencies, tokens, metric scores, citations)", fillcolor="#fed7aa", color="#c2410c"];
+
+        Config -> Metrics;
+        Metrics -> Chart1;
+        Metrics -> Chart2;
+        Chart1 -> Export;
+        Chart2 -> Export;
+    }
+}

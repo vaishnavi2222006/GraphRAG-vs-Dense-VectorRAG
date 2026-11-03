@@ -7,7 +7,7 @@ from rag_benchmark_lab.app import get_context
 from rag_benchmark_lab.utils.auth import get_current_user_name, is_authenticated
 from rag_benchmark_lab.utils.ui import (
     inject_custom_css,
-    render_dev_mode_banner,
+    render_html,
     render_topnav,
 )
 
@@ -25,326 +25,463 @@ is_auth = is_authenticated()
 user_name = get_current_user_name() or "Researcher"
 user_id = st.session_state.get("_rag_auth_user_id", "")
 
-render_dev_mode_banner(context.settings.llm_mock_mode)
-
 user_kbs = []
 if is_auth and user_id:
     user_kbs = context.user_registry.list_knowledge_bases(user_id)
 
-# ── 1. Hero Section ──────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <div style="text-align: center; padding: 36px 16px 20px; max-width: 860px; margin: 0 auto;">
-      <h1 style="font-size: 44px; font-weight: 800; color: #F5F7FA; margin: 0 0 16px 0; letter-spacing: -0.035em; line-height: 1.15;">
-        Make Your Documents Searchable.<br/>
-        <span style="color: #8B7CFF;">Compare Your RAG.</span>
-      </h1>
-      <p style="font-size: 16px; color: #A0AABC; margin: 0 auto 28px; line-height: 1.6; max-width: 660px;">
-        Explore how Vector RAG, GraphRAG, and Hybrid RAG retrieve evidence and answer questions from your documents.
-      </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# Fetch real backend statistics (Strictly genuine data, never hardcoded)
+real_counts = context.health_service.get_real_counts()
+all_docs = context.registry.list_documents()
+eval_runs = context.result_store.list_runs()
 
-# ── Hero Buttons ─────────────────────────────────────────────────────────────
-c_sp1, c_b1, c_b2, c_sp2 = st.columns([1.6, 1.4, 1.4, 1.6], vertical_alignment="center")
+total_documents = len(all_docs)
+total_chunks = real_counts.get("chunks", 0)
+total_entities = real_counts.get("entities", 0)
+total_relationships = real_counts.get("relationships", 0)
+total_eval_runs = len(eval_runs)
+
+# ── 1. Hero Section ──────────────────────────────────────────────────────────
+HERO_HTML = """<div style="text-align:center;padding:40px 16px 16px;max-width:860px;margin:0 auto;">
+<div style="display:inline-flex;align-items:center;gap:8px;background:var(--accent-light);border:1px solid var(--accent-border);border-radius:9999px;padding:4px 14px;margin-bottom:16px;">
+  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);"></span>
+  <span style="font-size:11.5px;font-weight:700;color:var(--accent);letter-spacing:0.04em;text-transform:uppercase;">Empirical AI Research Platform</span>
+</div>
+<h1 style="font-size:44px;font-weight:800;color:var(--text);margin:0 0 14px 0;letter-spacing:-0.035em;line-height:1.15;">
+  RAG Benchmark Lab
+</h1>
+<p style="font-size:16px;color:var(--text-muted);margin:0 auto 24px;line-height:1.6;max-width:680px;">
+  Compare, evaluate, and understand retrieval-augmented generation architectures.
+  Benchmark dense vector semantic search, knowledge graph traversal, and hybrid rank fusion on your domain documents.
+</p>
+</div>"""
+render_html(HERO_HTML)
+
+# ── Hero Actions ─────────────────────────────────────────────────────────────
+c_sp1, c_b1, c_b2, c_sp2 = st.columns([1.8, 1.4, 1.5, 1.8], vertical_alignment="center")
 with c_b1:
-    if not is_auth:
-        if st.button("Get Started", type="primary", use_container_width=True, key="home_hero_get_started"):
-            st.switch_page("pages/0_Login.py")
-    elif not user_kbs:
-        if st.button("Get Started", type="primary", use_container_width=True, key="home_hero_get_started"):
-            st.switch_page("pages/2_Documents.py")
-    else:
-        if st.button("Get Started", type="primary", use_container_width=True, key="home_hero_get_started"):
-            st.switch_page("pages/3_Chat.py")
+    with st.container(key="hero_get_started_wrap"):
+        if not is_auth:
+            if st.button("Get Started", type="primary", use_container_width=True, key="home_hero_get_started"):
+                st.switch_page("pages/0_Login.py")
+        elif not user_kbs:
+            if st.button("Get Started", type="primary", use_container_width=True, key="home_hero_get_started"):
+                st.session_state["show_create_kb"] = True
+                st.switch_page("pages/2_Documents.py")
+        else:
+            if st.button("Get Started", type="primary", use_container_width=True, key="home_hero_get_started"):
+                st.switch_page("pages/3_Chat.py")
 
 with c_b2:
-    if st.button("Explore RAG Methods", use_container_width=True, key="home_hero_explore"):
-        st.switch_page("pages/4_Compare.py")
+    with st.container(key="hero_explore_wrap"):
+        if st.button("Explore RAG Methods", use_container_width=True, key="home_hero_explore"):
+            st.switch_page("pages/4_Compare.py")
 
-st.markdown("<div style='height: 36px;'></div>", unsafe_allow_html=True)
+render_html("<div style='height:28px;'></div>")
 
-# ── 2. Product Illustration: Connected RAG Workflow ──────────────────────────
-with st.container(border=True):
-    st.markdown(
-        """
-        <div style="text-align: center; margin-bottom: 20px;">
-          <span style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: #8B7CFF;">System Architecture</span>
-          <h3 style="font-size: 18px; font-weight: 700; color: #F5F7FA; margin: 4px 0 0 0;">Unified RAG Retrieval & Synthesis Pipeline</h3>
-        </div>
-        """,
-        unsafe_allow_html=True,
+# ── 2. Live Platform Overview Cards ──────────────────────────────────────────
+m_col1, m_col2, m_col3, m_col4, m_col5 = st.columns(5)
+
+with m_col1:
+    render_html(
+        f"""<div class="stat-card">
+          <div class="stat-value" style="color:var(--text);">{total_documents}</div>
+          <div class="stat-label">Total Documents</div>
+        </div>"""
+    )
+with m_col2:
+    render_html(
+        f"""<div class="stat-card">
+          <div class="stat-value" style="color:var(--vector);">{total_chunks}</div>
+          <div class="stat-label">Total Chunks</div>
+        </div>"""
+    )
+with m_col3:
+    render_html(
+        f"""<div class="stat-card">
+          <div class="stat-value" style="color:var(--graph);">{total_entities}</div>
+          <div class="stat-label">Total Entities</div>
+        </div>"""
+    )
+with m_col4:
+    render_html(
+        f"""<div class="stat-card">
+          <div class="stat-value" style="color:var(--hybrid);">{total_relationships}</div>
+          <div class="stat-label">Total Relationships</div>
+        </div>"""
+    )
+with m_col5:
+    render_html(
+        f"""<div class="stat-card">
+          <div class="stat-value" style="color:var(--accent);">{total_eval_runs}</div>
+          <div class="stat-label">Evaluation Runs</div>
+        </div>"""
     )
 
-    c_doc, c_arr1, c_ret, c_arr2, c_ans = st.columns([1.2, 0.3, 3.4, 0.3, 1.2], vertical_alignment="center")
+render_html("<div style='height:36px;'></div>")
 
-    with c_doc:
-        with st.container(border=True):
-            st.markdown(
-                """
-                <div style="text-align: center; padding: 8px 4px;">
-                  <div style="display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; background: rgba(57, 198, 181, 0.12); border: 1px solid rgba(57, 198, 181, 0.3); margin-bottom: 8px;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#39C6B5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                      <polyline points="14 2 14 8 20 8"></polyline>
-                      <line x1="16" y1="13" x2="8" y2="13"></line>
-                      <line x1="16" y1="17" x2="8" y2="17"></line>
-                      <polyline points="10 9 9 9 8 9"></polyline>
-                    </svg>
-                  </div>
-                  <div style="font-size: 13.5px; font-weight: 700; color: #39C6B5;">DOCUMENTS</div>
-                  <div style="font-size: 11.5px; color: #A0AABC; margin-top: 4px;">PDF · DOCX · TXT</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+# ── 3. Connected Architecture Overview Pipeline ──────────────────────────────
+ARCH_WORKFLOW_HTML = """<div class="arch-card-wrap">
+<div class="arch-header-wrap">
+  <span class="arch-tag">SYSTEM ARCHITECTURE</span>
+  <h3 class="arch-title">End-to-End RAG Processing &amp; Evaluation Pipeline</h3>
+  <p style="font-size:13px;color:var(--text-muted);margin:6px 0 0 0;">
+    From raw unstructured documents to verifiable multi-hop answers and empirical benchmark metrics.
+  </p>
+</div>
 
-    with c_arr1:
-        st.markdown("<div style='text-align: center; color: #3D4E6A; font-size: 20px; font-weight: 700;'>→</div>", unsafe_allow_html=True)
+<div class="arch-pipeline">
+  <!-- Step 1: Upload -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--accent-light);border:1px solid var(--accent-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+        <polyline points="17 8 12 3 7 8"></polyline>
+        <line x1="12" y1="3" x2="12" y2="15"></line>
+      </svg>
+    </div>
+    <div class="arch-node-name">1. Upload</div>
+    <div class="arch-node-sub">PDF · DOCX · TXT</div>
+  </div>
 
-    with c_ret:
-        r1, r2, r3 = st.columns(3)
-        with r1:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="text-align: center; padding: 6px 2px;">
-                      <div style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; background: rgba(96, 165, 250, 0.12); border: 1px solid rgba(96, 165, 250, 0.3); margin-bottom: 6px;">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#60A5FA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <circle cx="12" cy="12" r="10"></circle>
-                          <line x1="2" y1="12" x2="22" y2="12"></line>
-                          <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
-                        </svg>
-                      </div>
-                      <div style="font-size: 13px; font-weight: 700; color: #60A5FA;">Vector RAG</div>
-                      <div style="font-size: 11px; color: #A0AABC; margin-top: 4px;">Dense Embeddings</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        with r2:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="text-align: center; padding: 6px 2px;">
-                      <div style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; background: rgba(167, 139, 250, 0.12); border: 1px solid rgba(167, 139, 250, 0.3); margin-bottom: 6px;">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#A78BFA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <circle cx="18" cy="5" r="3"></circle>
-                          <circle cx="6" cy="12" r="3"></circle>
-                          <circle cx="18" cy="19" r="3"></circle>
-                          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
-                          <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
-                        </svg>
-                      </div>
-                      <div style="font-size: 13px; font-weight: 700; color: #A78BFA;">GraphRAG</div>
-                      <div style="font-size: 11px; color: #A0AABC; margin-top: 4px;">Entity Traversal</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
-        with r3:
-            with st.container(border=True):
-                st.markdown(
-                    """
-                    <div style="text-align: center; padding: 6px 2px;">
-                      <div style="display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 6px; background: rgba(57, 198, 181, 0.12); border: 1px solid rgba(57, 198, 181, 0.3); margin-bottom: 6px;">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#39C6B5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                          <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-                          <polyline points="2 17 12 22 22 17"></polyline>
-                          <polyline points="2 12 12 17 22 12"></polyline>
-                        </svg>
-                      </div>
-                      <div style="font-size: 13px; font-weight: 700; color: #39C6B5;">Hybrid RAG</div>
-                      <div style="font-size: 11px; color: #A0AABC; margin-top: 4px;">Rank Fusion (RRF)</div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True,
-                )
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
 
-    with c_arr2:
-        st.markdown("<div style='text-align: center; color: #3D4E6A; font-size: 20px; font-weight: 700;'>→</div>", unsafe_allow_html=True)
+  <!-- Step 2: Extraction -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--vector-bg);border:1px solid var(--vector-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--vector)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+        <polyline points="14 2 14 8 20 8"></polyline>
+        <line x1="16" y1="13" x2="8" y2="13"></line>
+        <line x1="16" y1="17" x2="8" y2="17"></line>
+      </svg>
+    </div>
+    <div class="arch-node-name">2. Extraction</div>
+    <div class="arch-node-sub">Clean Text Stream</div>
+  </div>
 
-    with c_ans:
-        with st.container(border=True):
-            st.markdown(
-                """
-                <div style="text-align: center; padding: 8px 4px;">
-                  <div style="display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 8px; background: rgba(139, 124, 255, 0.12); border: 1px solid rgba(139, 124, 255, 0.3); margin-bottom: 8px;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8B7CFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                    </svg>
-                  </div>
-                  <div style="font-size: 13.5px; font-weight: 700; color: #8B7CFF;">ANSWERS</div>
-                  <div style="font-size: 11.5px; color: #A0AABC; margin-top: 4px;">Grounded Citations</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
 
-st.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
+  <!-- Step 3: Chunking -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--graph-bg);border:1px solid var(--graph-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--graph)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7"></rect>
+        <rect x="14" y="3" width="7" height="7"></rect>
+        <rect x="14" y="14" width="7" height="7"></rect>
+        <rect x="3" y="14" width="7" height="7"></rect>
+      </svg>
+    </div>
+    <div class="arch-node-name">3. Chunking</div>
+    <div class="arch-node-sub">Semantic Passages</div>
+  </div>
 
-# ── 3. Feature Cards ─────────────────────────────────────────────────────────
-st.markdown("### Retrieval Architectures")
-st.caption("Three complementary approaches to finding ground-truth evidence in your documents.")
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
 
-col_f1, col_f2, col_f3 = st.columns(3)
+  <!-- Step 4: Embeddings -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--hybrid-bg);border:1px solid var(--hybrid-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--hybrid)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+        <polyline points="2 17 12 22 22 17"></polyline>
+        <polyline points="2 12 12 17 22 12"></polyline>
+      </svg>
+    </div>
+    <div class="arch-node-name">4. Embeddings</div>
+    <div class="arch-node-sub">Dense Vectors</div>
+  </div>
+
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
+
+  <!-- Step 5: Vector DB / Graph -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--accent-light);border:1px solid var(--accent-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5" rx="9" ry="3"></ellipse>
+        <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"></path>
+        <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"></path>
+      </svg>
+    </div>
+    <div class="arch-node-name">5. Vector / Graph</div>
+    <div class="arch-node-sub">Qdrant &amp; Neo4j</div>
+  </div>
+
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
+
+  <!-- Step 6: Retrieval -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--vector-bg);border:1px solid var(--vector-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--vector)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    </div>
+    <div class="arch-node-name">6. Retrieval</div>
+    <div class="arch-node-sub">Vector, Graph, RRF</div>
+  </div>
+
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
+
+  <!-- Step 7: LLM Generation -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--graph-bg);border:1px solid var(--graph-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--graph)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+      </svg>
+    </div>
+    <div class="arch-node-name">7. Generation</div>
+    <div class="arch-node-sub">Grounded Synthesis</div>
+  </div>
+
+  <div class="arch-arrow">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>
+  </div>
+
+  <!-- Step 8: Evaluation -->
+  <div class="arch-node">
+    <div class="arch-node-icon" style="background:var(--success-bg);border:1px solid var(--success-border);">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--success)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M18 20V10"></path>
+        <path d="M12 20V4"></path>
+        <path d="M6 20v-6"></path>
+      </svg>
+    </div>
+    <div class="arch-node-name">8. Evaluation</div>
+    <div class="arch-node-sub">RAG Triad &amp; Speed</div>
+  </div>
+</div>
+</div>"""
+render_html(ARCH_WORKFLOW_HTML)
+
+render_html("<div style='height:36px;'></div>")
+
+# ── 4. Retrieval Architecture Strategies ──────────────────────────────────────
+render_html(
+    """<div style="margin-bottom:16px;">
+<h2 style="font-size:22px;font-weight:800;color:var(--text);margin:0 0 4px 0;letter-spacing:-0.02em;">
+  Retrieval Architectures Under Study
+</h2>
+<p style="font-size:14px;color:var(--text-muted);margin:0;">
+  Three foundational retrieval paradigms benchmarked against domain documents.
+</p>
+</div>"""
+)
+
+col_f1, col_f2, col_f3 = st.columns(3, gap="medium")
 
 with col_f1:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <span style="font-size: 16px; font-weight: 700; color: #F5F7FA;">VECTOR RAG</span>
-              <span class="badge badge-vector">Semantic</span>
-            </div>
-            <p style="font-size: 13.5px; color: #A0AABC; line-height: 1.55; min-height: 48px; margin-bottom: 16px;">
-              Retrieve semantically similar passages from your documents.
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Explore Vector RAG", use_container_width=True, key="feat_btn_vector"):
-            st.switch_page("pages/4_Compare.py")
+    render_html(
+        """<div class="retrieval-card">
+<div class="retrieval-card-top">
+  <div class="retrieval-card-title-group">
+    <div class="retrieval-card-icon" style="background:var(--vector-bg);border:1px solid var(--vector-border);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--vector)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10"></circle>
+        <line x1="2" y1="12" x2="22" y2="12"></line>
+        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+      </svg>
+    </div>
+    <span class="retrieval-card-title">Vector RAG</span>
+  </div>
+  <span class="badge badge-vector">Semantic Search</span>
+</div>
+<p class="retrieval-card-desc">
+  Encodes text passages into dense mathematical embedding spaces. Performs cosine nearest-neighbor search via Qdrant to retrieve conceptually similar content with low latency.
+</p>
+</div>"""
+    )
+    if st.button("Compare Vector RAG", use_container_width=True, key="feat_btn_vector"):
+        st.switch_page("pages/4_Compare.py")
 
 with col_f2:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <span style="font-size: 16px; font-weight: 700; color: #F5F7FA;">GRAPHRAG</span>
-              <span class="badge badge-graph">Relational</span>
-            </div>
-            <p style="font-size: 13.5px; color: #A0AABC; line-height: 1.55; min-height: 48px; margin-bottom: 16px;">
-              Discover entities and relationships connecting information across documents.
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Explore GraphRAG", use_container_width=True, key="feat_btn_graph"):
-            st.switch_page("pages/4_Compare.py")
+    render_html(
+        """<div class="retrieval-card">
+<div class="retrieval-card-top">
+  <div class="retrieval-card-title-group">
+    <div class="retrieval-card-icon" style="background:var(--graph-bg);border:1px solid var(--graph-border);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--graph)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="18" cy="5" r="3"></circle>
+        <circle cx="6" cy="12" r="3"></circle>
+        <circle cx="18" cy="19" r="3"></circle>
+        <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+        <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+      </svg>
+    </div>
+    <span class="retrieval-card-title">GraphRAG</span>
+  </div>
+  <span class="badge badge-graph">Relational Graph</span>
+</div>
+<p class="retrieval-card-desc">
+  Extracts named entities and typed relationships into Neo4j property graphs. Traverses multi-hop entity chains to synthesize cross-document relational insights that vectors miss.
+</p>
+</div>"""
+    )
+    if st.button("Compare GraphRAG", use_container_width=True, key="feat_btn_graph"):
+        st.switch_page("pages/4_Compare.py")
 
 with col_f3:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-              <span style="font-size: 16px; font-weight: 700; color: #F5F7FA;">HYBRID RAG</span>
-              <span class="badge badge-hybrid">Combined</span>
-            </div>
-            <p style="font-size: 13.5px; color: #A0AABC; line-height: 1.55; min-height: 48px; margin-bottom: 16px;">
-              Combine vector retrieval and graph relationships to gather evidence.
-            </p>
-            """,
-            unsafe_allow_html=True,
-        )
-        if st.button("Explore Hybrid RAG", use_container_width=True, key="feat_btn_hybrid"):
-            st.switch_page("pages/4_Compare.py")
+    render_html(
+        """<div class="retrieval-card">
+<div class="retrieval-card-top">
+  <div class="retrieval-card-title-group">
+    <div class="retrieval-card-icon" style="background:var(--hybrid-bg);border:1px solid var(--hybrid-border);">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--hybrid)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+        <polyline points="2 17 12 22 22 17"></polyline>
+        <polyline points="2 12 12 17 22 12"></polyline>
+      </svg>
+    </div>
+    <span class="retrieval-card-title">Hybrid RAG</span>
+  </div>
+  <span class="badge badge-hybrid">Rank Fusion</span>
+</div>
+<p class="retrieval-card-desc">
+  Fuses dense vector semantic similarity with knowledge graph path traversal using Reciprocal Rank Fusion (RRF). Balances semantic recall with relational precision for high accuracy.
+</p>
+</div>"""
+    )
+    if st.button("Compare Hybrid RAG", use_container_width=True, key="feat_btn_hybrid"):
+        st.switch_page("pages/4_Compare.py")
 
-st.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
+render_html("<div style='height:36px;'></div>")
 
-# ── 4. How It Works (01, 02, 03) ─────────────────────────────────────────────
-st.markdown("### How It Works")
-st.caption("A structured three-step workflow from raw documents to measurable benchmark insights.")
+# ── 5. How It Works ──────────────────────────────────────────────────────────
+render_html(
+    """<div style="margin-bottom:16px;">
+<h2 style="font-size:22px;font-weight:800;color:var(--text);margin:0 0 4px 0;letter-spacing:-0.02em;">
+  Experimental Workflow
+</h2>
+<p style="font-size:14px;color:var(--text-muted);margin:0;">
+  Three systematic stages from raw domain files to reproducible benchmark results.
+</p>
+</div>"""
+)
 
-c_s1, c_s2, c_s3 = st.columns(3)
+c_s1, c_s2, c_s3 = st.columns(3, gap="medium")
 
 with c_s1:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="font-size: 20px; font-weight: 800; color: #8B7CFF; margin-bottom: 6px;">01 — Upload</div>
-            <div style="font-size: 13.5px; color: #A0AABC; line-height: 1.5; min-height: 42px;">
-              Add your PDF, DOCX, or TXT documents.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    render_html(
+        """<div class="rag-card" style="min-height:140px;">
+          <div style="font-size:16px;font-weight:800;color:var(--accent);margin-bottom:8px;">01 — Ingest &amp; Index</div>
+          <div style="font-size:13.5px;color:var(--text-muted);line-height:1.5;">
+            Upload PDF, DOCX, or TXT documents into an isolated knowledge base. Automatic chunking, vector embedding, and entity-relationship extraction.
+          </div>
+        </div>"""
+    )
 
 with c_s2:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="font-size: 20px; font-weight: 800; color: #39C6B5; margin-bottom: 6px;">02 — Ask</div>
-            <div style="font-size: 13.5px; color: #A0AABC; line-height: 1.5; min-height: 42px;">
-              Ask questions and inspect the supporting evidence.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    render_html(
+        """<div class="rag-card" style="min-height:140px;">
+          <div style="font-size:16px;font-weight:800;color:var(--vector);margin-bottom:8px;">02 — Query &amp; Inspect</div>
+          <div style="font-size:13.5px;color:var(--text-muted);line-height:1.5;">
+            Chat conversationally or run side-by-side queries. Inspect verifiable citations, similarity scores, and multi-hop graph paths.
+          </div>
+        </div>"""
+    )
 
 with c_s3:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="font-size: 20px; font-weight: 800; color: #35C98A; margin-bottom: 6px;">03 — Evaluate</div>
-            <div style="font-size: 13.5px; color: #A0AABC; line-height: 1.5; min-height: 42px;">
-              Compare retrieval strategies and measure their performance.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    render_html(
+        """<div class="rag-card" style="min-height:140px;">
+          <div style="font-size:16px;font-weight:800;color:var(--success);margin-bottom:8px;">03 — Benchmark &amp; Score</div>
+          <div style="font-size:13.5px;color:var(--text-muted);line-height:1.5;">
+            Execute standardized benchmark suites to evaluate faithfulness, answer relevancy, context precision, and latency distributions.
+          </div>
+        </div>"""
+    )
 
-st.markdown("<div style='height: 32px;'></div>", unsafe_allow_html=True)
+render_html("<div style='height:36px;'></div>")
 
-# ── 5. Existing Workspace Status ──────────────────────────────────────────────
-st.markdown("### Research Workspace")
-st.caption("Current status and quick navigation for your active research session.")
+# ── 6. Active Research Workspace Status ───────────────────────────────────────
+render_html(
+    """<div style="margin-bottom:16px;">
+<h2 style="font-size:22px;font-weight:800;color:var(--text);margin:0 0 4px 0;letter-spacing:-0.02em;">
+  Research Workspace
+</h2>
+<p style="font-size:14px;color:var(--text-muted);margin:0;">
+  Current session status and rapid navigation for your active knowledge base.
+</p>
+</div>"""
+)
 
 if is_auth:
     if user_kbs:
         active_kb_id = st.session_state.get("active_kb_id", user_kbs[0].kb_id)
         active_kb = next((kb for kb in user_kbs if kb.kb_id == active_kb_id), user_kbs[0])
 
-        real_counts = context.health_service.get_real_counts()
         kb_doc_ids = context.user_registry.get_kb_document_ids(active_kb.kb_id, user_id)
-        all_docs = context.registry.list_documents()
         docs = [d for d in all_docs if d["document_id"] in set(kb_doc_ids)]
 
-        # Determine true processing status
+        # Determine processing status
         if not docs:
             processing_status = "No documents"
+            status_badge_html = '<span class="badge badge-warning">No documents</span>'
         elif any(d.get("status", "").lower() == "failed" for d in docs):
-            processing_status = "Attention required"
+            status_badge_html = '<span class="badge badge-error">Attention required</span>'
         else:
-            processing_status = "Ready"
+            status_badge_html = '<span class="badge badge-success">Ready</span>'
 
-        # Determine latest evaluation status
-        eval_runs = context.result_store.list_runs()
+        # Latest evaluation info
         if eval_runs:
             latest_run = eval_runs[0]
             eval_date = latest_run.get("timestamp", "")[:10]
-            strategies_run = ", ".join(latest_run.get("strategies", []))
-            latest_eval_status = f"{len(eval_runs)} runs recorded ({eval_date})"
+            latest_eval_status = f"{len(eval_runs)} run(s) ({eval_date})"
         else:
             latest_eval_status = "No runs yet"
 
-        with st.container(border=True):
-            st.markdown(
-                f"""
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; flex-wrap: wrap; gap: 8px;">
-                  <div>
-                    <span style="font-size: 11.5px; color: #A0AABC; text-transform: uppercase; letter-spacing: 0.05em;">Active Knowledge Base</span>
-                    <div style="font-size: 18px; font-weight: 700; color: #F5F7FA;">{active_kb.name}</div>
-                  </div>
-                  <div>
-                    <span class="badge badge-success">{processing_status}</span>
-                  </div>
+        render_html(
+            f"""<div class="rag-card" style="margin-bottom:16px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+                <div>
+                  <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;font-weight:600;">Active Knowledge Base</span>
+                  <div style="font-size:19px;font-weight:800;color:var(--text);">{active_kb.name}</div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                <div>{status_badge_html}</div>
+              </div>
+            </div>"""
+        )
+
+        ws1, ws2, ws3, ws4 = st.columns(4)
+        with ws1:
+            render_html(
+                f"""<div class="stat-card" style="padding:16px;">
+                  <div class="stat-value">{len(docs)}</div>
+                  <div class="stat-label">KB Documents</div>
+                </div>"""
+            )
+        with ws2:
+            render_html(
+                f"""<div class="stat-card" style="padding:16px;">
+                  <div class="stat-value" style="color:var(--vector);">{real_counts.get("chunks", 0)}</div>
+                  <div class="stat-label">Indexed Chunks</div>
+                </div>"""
+            )
+        with ws3:
+            render_html(
+                f"""<div class="stat-card" style="padding:16px;">
+                  <div class="stat-value" style="color:var(--graph);">{real_counts.get("entities", 0)}</div>
+                  <div class="stat-label">Graph Entities</div>
+                </div>"""
+            )
+        with ws4:
+            render_html(
+                f"""<div class="stat-card" style="padding:16px;">
+                  <div class="stat-value" style="font-size:20px;color:var(--accent);line-height:1.4;">{latest_eval_status}</div>
+                  <div class="stat-label">Benchmark Status</div>
+                </div>"""
             )
 
-            m1, m2, m3, m4 = st.columns(4)
-            with m1:
-                st.metric("Documents", len(docs))
-            with m2:
-                st.metric("Indexed Chunks", real_counts.get("chunks", 0))
-            with m3:
-                st.metric("Graph Entities", real_counts.get("entities", 0))
-            with m4:
-                st.metric("Evaluation Status", latest_eval_status)
+        render_html("<div style='height:16px;'></div>")
 
         c_act1, c_act2, c_act3 = st.columns(3)
         with c_act1:
@@ -358,37 +495,33 @@ if is_auth:
                 st.switch_page("pages/5_Evaluation.py")
 
     else:
-        with st.container(border=True):
-            st.markdown(
-                """
-                <div style="text-align: center; padding: 24px 16px;">
-                  <h4 style="font-size: 16px; font-weight: 700; color: #F5F7FA; margin: 0 0 6px 0;">No Knowledge Bases Created</h4>
-                  <p style="font-size: 13.5px; color: #A0AABC; max-width: 480px; margin: 0 auto 18px; line-height: 1.5;">
-                    Create your first knowledge base in Documents to start uploading PDF, DOCX, or TXT documents.
-                  </p>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-            c_k1, c_k2, c_k3 = st.columns([1, 1.2, 1])
-            with c_k2:
-                if st.button("Create Knowledge Base", type="primary", use_container_width=True, key="home_btn_create_kb"):
-                    st.switch_page("pages/2_Documents.py")
+        render_html(
+            """<div class="rag-card" style="text-align:center;padding:36px 20px;">
+              <h4 style="font-size:17px;font-weight:800;color:var(--text);margin:0 0 6px 0;">No Knowledge Bases Created</h4>
+              <p style="font-size:13.5px;color:var(--text-muted);max-width:480px;margin:0 auto 18px;line-height:1.5;">
+                Create your first knowledge base in Documents to start uploading PDF, DOCX, or TXT documents.
+              </p>
+            </div>"""
+        )
+        c_k1, c_k2, c_k3 = st.columns([1, 1.2, 1])
+        with c_k2:
+            if st.button("Create Knowledge Base", type="primary", use_container_width=True, key="home_btn_create_kb"):
+                st.session_state["show_create_kb"] = True
+                st.switch_page("pages/2_Documents.py")
 
 else:
-    with st.container(border=True):
-        st.markdown(
-            """
-            <div style="text-align: center; padding: 28px 16px;">
-              <h4 style="font-size: 18px; font-weight: 700; color: #F5F7FA; margin: 0 0 8px 0;">Get Started with RAG Benchmark Lab</h4>
-              <p style="font-size: 14px; color: #A0AABC; max-width: 520px; margin: 0 auto 20px; line-height: 1.6;">
-                Sign in to upload research documents, build connected knowledge graphs, query using Vector RAG and GraphRAG, and evaluate empirical performance.
-              </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        c_s_sp1, c_s_btn, c_s_sp2 = st.columns([1.5, 1.2, 1.5])
-        with c_s_btn:
-            if st.button("Sign In to Workspace", type="primary", use_container_width=True, key="home_btn_signin"):
-                st.switch_page("pages/0_Login.py")
+    render_html(
+        """<div class="rag-card" style="text-align:center;padding:36px 20px;">
+          <h4 style="font-size:18px;font-weight:800;color:var(--text);margin:0 0 8px 0;">Get Started with RAG Benchmark Lab</h4>
+          <p style="font-size:14px;color:var(--text-muted);max-width:540px;margin:0 auto 20px;line-height:1.6;">
+            Sign in to upload research documents, build connected knowledge graphs, query using Vector RAG and GraphRAG, and evaluate empirical performance.
+          </p>
+        </div>"""
+    )
+    c_s_sp1, c_s_btn1, c_s_btn2, c_s_sp2 = st.columns([1.5, 1.2, 1.2, 1.5])
+    with c_s_btn1:
+        if st.button("Sign In", type="primary", use_container_width=True, key="home_btn_signin"):
+            st.switch_page("pages/0_Login.py")
+    with c_s_btn2:
+        if st.button("Create Account", use_container_width=True, key="home_btn_create_acct"):
+            st.switch_page("pages/0_Login.py")

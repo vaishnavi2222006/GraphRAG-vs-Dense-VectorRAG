@@ -60,6 +60,46 @@ for idx, item in enumerate(health_items):
 
 st.markdown("---")
 
+# LLM Provider Selection & Status
+st.markdown("### 🤖 Answer-Generation LLM Provider")
+prov_col1, prov_col2 = st.columns([1, 1])
+
+current_prov = st.session_state.get("override_llm_provider", settings.llm_provider)
+with prov_col1:
+    chosen_prov = st.radio(
+        "Active LLM Backend",
+        options=["gemini", "ollama"],
+        index=0 if current_prov == "gemini" else 1,
+        format_func=lambda x: "Google Gemini (Cloud API)" if x == "gemini" else "Ollama (Local Inference)",
+        key="prov_radio",
+    )
+    if chosen_prov != current_prov:
+        import os
+        st.session_state["override_llm_provider"] = chosen_prov
+        os.environ["LLM_PROVIDER"] = chosen_prov
+        st.cache_resource.clear()
+        st.rerun()
+
+with prov_col2:
+    import os
+    if chosen_prov == "gemini":
+        has_key = bool(settings.gemini_api_key or os.getenv("GEMINI_API_KEY"))
+        if has_key:
+            st.success(f"✅ Gemini is active. Model: `{settings.gemini_model}`. API key is configured.")
+        else:
+            st.warning("⚠️ `GEMINI_API_KEY` is not detected in environment.")
+            key_input = st.text_input("Enter Gemini API Key for current session:", type="password", key="session_gemini_key")
+            if st.button("Save API Key to Session"):
+                if key_input.strip():
+                    os.environ["GEMINI_API_KEY"] = key_input.strip()
+                    st.cache_resource.clear()
+                    st.success("API key saved. Reloading...")
+                    st.rerun()
+    else:
+        st.info(f"Ollama is configured at `{settings.ollama_base_url}` with model `{settings.ollama_model}`.")
+
+st.markdown("---")
+
 # Section 2: Structured Parameter Groups
 st.markdown("### ⚙️ Research Pipeline Hyperparameters")
 
@@ -94,12 +134,17 @@ with group_tab2:
 
 with group_tab3:
     st.markdown("#### LLM Generation & Evaluation Engine")
+    gemini_key_display = "Configured (***)" if settings.gemini_api_key else "Not Set (Set GEMINI_API_KEY)"
     llm_table = [
+        {"Parameter": "Active LLM Provider", "Value": settings.llm_provider.upper(), "Description": "Selected answer generation provider (Gemini or Ollama)"},
+        {"Parameter": "Google Gemini Model", "Value": settings.gemini_model, "Description": "Cloud model used when Gemini provider is selected"},
+        {"Parameter": "Gemini API Key", "Value": gemini_key_display, "Description": "Status of GEMINI_API_KEY environment variable"},
+        {"Parameter": "Gemini Timeout", "Value": f"{settings.gemini_timeout_seconds} seconds", "Description": "Socket timeout for Gemini API calls"},
         {"Parameter": "Ollama Base URL", "Value": settings.ollama_base_url, "Description": "Local inference REST API server"},
-        {"Parameter": "Ollama LLM Model", "Value": settings.ollama_model, "Description": "Local foundational model used for question answering"},
-        {"Parameter": "LLM Timeout", "Value": f"{settings.ollama_timeout_seconds} seconds", "Description": "HTTP socket timeout for generation requests"},
+        {"Parameter": "Ollama LLM Model", "Value": settings.ollama_model, "Description": "Local foundational model used when Ollama provider is selected"},
+        {"Parameter": "Ollama Timeout", "Value": f"{settings.ollama_timeout_seconds} seconds", "Description": "HTTP socket timeout for Ollama generation requests"},
         {"Parameter": "Answer Temperature", "Value": str(settings.answer_temperature), "Description": "Sampling temperature (0.0 for deterministic factual answers)"},
-        {"Parameter": "Mock Mode Active", "Value": str(settings.llm_mock_mode), "Description": "Whether offline development synthesis is enabled"},
+        {"Parameter": "Mock Mode Active", "Value": str(settings.llm_mock_mode), "Description": "Whether offline development synthesis is enabled for Ollama fallback"},
     ]
     st.dataframe(pd.DataFrame(llm_table), use_container_width=True)
 

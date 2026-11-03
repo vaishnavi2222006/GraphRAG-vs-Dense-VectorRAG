@@ -87,19 +87,34 @@ DOMAIN_ENTITIES: dict[str, str] = {
 }
 
 RELATIONAL_PATTERNS = [
-    (re.compile(r"\b(uses|utilizes|employs|relies on|built on|leveraging)\b", re.I), "USES"),
-    (re.compile(r"\b(stores|indexes|persists|holds|maintains)\b", re.I), "STORES"),
-    (re.compile(r"\b(retrieves|queries|fetches|searches|extracts from)\b", re.I), "RETRIEVES"),
-    (re.compile(r"\b(evaluates|compares|benchmarks|measures|assesses)\b", re.I), "EVALUATES"),
-    (re.compile(r"\b(generates|produces|synthesizes|creates|outputs)\b", re.I), "GENERATES"),
-    (re.compile(r"\b(combines|fuses|integrates|optimizes|enhances)\b", re.I), "FUSES_WITH"),
-    (re.compile(r"\b(connects to|links to|bridges|depends on|routes to)\b", re.I), "CONNECTS_TO"),
-    (re.compile(r"\b(comprises|consists of|contains|includes)\b", re.I), "CONTAINS"),
-    (re.compile(r"\b(preserves|retains|preserves metadata)\b", re.I), "PRESERVES"),
-    (re.compile(r"\b(provides|delivers|serves)\b", re.I), "PROVIDES"),
-    (re.compile(r"\b(requires|needs|demands)\b", re.I), "REQUIRES"),
-    (re.compile(r"\b(sufficient for|suitable for|excels at|ideal for|optimized for)\b", re.I), "OPTIMIZED_FOR"),
-    (re.compile(r"\b(records|logs|tracks|monitors)\b", re.I), "RECORDS"),
+    (re.compile(r"\b(leads|heads|headed by|directed by|founded by|appointed as|serves as|chair of|director of|cto at|ceo at|lead|leader of)\b", re.I), "LEADS"),
+    (re.compile(r"\b(headquartered in|based in|located in|headquarters in|situated in|operating from)\b", re.I), "LOCATED_IN"),
+    (re.compile(r"\b(uses|utilizes|employs|relies on|built on|leveraging|operates on|powered by)\b", re.I), "USES"),
+    (re.compile(r"\b(stores|indexes|persists|holds|maintains|archives)\b", re.I), "STORES"),
+    (re.compile(r"\b(retrieves|queries|fetches|searches|extracts from|accesses)\b", re.I), "RETRIEVES"),
+    (re.compile(r"\b(evaluates|compares|benchmarks|measures|assesses|analyzes|tests)\b", re.I), "EVALUATES"),
+    (re.compile(r"\b(generates|produces|synthesizes|creates|outputs|emits|yields)\b", re.I), "GENERATES"),
+    (re.compile(r"\b(converts directly into|converts to|converts into|converts|transforms into|translates to)\b", re.I), "CONVERTS_TO"),
+    (re.compile(r"\b(combines|fuses|integrates|optimizes|enhances|merges with)\b", re.I), "FUSES_WITH"),
+    (re.compile(r"\b(connects to|links to|bridges|depends on|routes to|interacts with|interfaces with)\b", re.I), "CONNECTS_TO"),
+    (re.compile(r"\b(comprises|consists of|contains|includes|composed of|encompasses)\b", re.I), "CONTAINS"),
+    (re.compile(r"\b(division of|part of|subsidiary of|branch of|member of|belongs to|affiliated with|associated with)\b", re.I), "PART_OF"),
+    (re.compile(r"\b(authored by|developed by|created by|published by|designed by|invented by|researched by|develops|designs|manufactures|discovered by|built by)\b", re.I), "DEVELOPS"),
+    (re.compile(r"\b(preserves|retains|preserves metadata|maintains state)\b", re.I), "PRESERVES"),
+    (re.compile(r"\b(provides|delivers|serves|offers|supplies)\b", re.I), "PROVIDES"),
+    (re.compile(r"\b(requires|needs|demands|mandates|targets|aims to limit|aims to|stipulates)\b", re.I), "REQUIRES"),
+    (re.compile(r"\b(sufficient for|suitable for|excels at|ideal for|optimized for|specialized in)\b", re.I), "OPTIMIZED_FOR"),
+    (re.compile(r"\b(records|logs|tracks|monitors|regulates|oversees|manages|governs|administers)\b", re.I), "TRACKS"),
+    (re.compile(r"\b(achieved|achieves|reached|exceeded|fell to|decreased to|increased to|priced at|costs|valued at|rated at|weighs|measures)\b", re.I), "ACHIEVED"),
+    (re.compile(r"\b(collaborates with|partnered with|partners with|in partnership with|contracted with|alliance with)\b", re.I), "PARTNERS_WITH"),
+    (re.compile(r"\b(replaces|substitutes for|supersedes|displaces)\b", re.I), "REPLACES"),
+    (re.compile(r"\b(owns|acquired|purchased|bought|controls|holding)\b", re.I), "OWNS"),
+    (re.compile(r"\b(causes|triggers|results in|leads to|induces|promotes|stimulates)\b", re.I), "CAUSES"),
+    (re.compile(r"\b(prevents|inhibits|blocks|reduces|decreases|lowers|alleviates|stops)\b", re.I), "INHIBITS"),
+    (re.compile(r"\b(treats|cures|heals|diagnoses|prescribed for)\b", re.I), "TREATS"),
+    (re.compile(r"\b(binds to|expresses|encodes|catalyzes|metabolizes)\b", re.I), "BINDS_TO"),
+    (re.compile(r"\b(invests in|finances|funds|backs)\b", re.I), "INVESTS_IN"),
+    (re.compile(r"\b(competes with|rivals|opposes|differs from)\b", re.I), "COMPETES_WITH"),
 ]
 
 
@@ -115,20 +130,50 @@ def normalize_entity_name(name: str) -> str:
 
 def infer_entity_type(name: str, default: str = "Concept") -> str:
     clean = normalize_entity_name(name).lower()
+    # Check DOMAIN_ENTITIES first (demo project specifics get exact/substring match)
     if clean in DOMAIN_ENTITIES:
         return DOMAIN_ENTITIES[clean]
     for key, etype in DOMAIN_ENTITIES.items():
         if key in clean:
             return etype
-    if any(suffix in clean for suffix in ["service", "engine", "pipeline", "router", "extractor", "retriever", "adapter"]):
+    # --- General-purpose heuristics for arbitrary documents ---
+    # People: title prefix or known name suffix patterns
+    person_prefixes = {"dr", "dr.", "prof", "prof.", "mr", "mr.", "mrs", "mrs.", "ms", "ms.", "sir", "rev"}
+    if clean.split()[0] in person_prefixes:
+        return "Person"
+    # Organizations
+    org_tokens = ["inc", "inc.", "corp", "corp.", "ltd", "ltd.", "llc", "plc", "gmbh",
+                  "foundation", "institute", "university", "college", "school",
+                  "association", "organization", "agency", "department", "ministry",
+                  "bureau", "committee", "company", "enterprise", "group"]
+    if any(clean.endswith(t) or (f" {t}" in clean) for t in org_tokens):
+        return "Organization"
+    # Locations
+    location_tokens = ["city", "town", "village", "country", "state", "province",
+                       "region", "district", "county", "territory", "island",
+                       "ocean", "river", "mountain", "street", "avenue", "road"]
+    if any(t in clean for t in location_tokens):
+        return "Location"
+    # Technical components
+    if any(s in clean for s in ["service", "engine", "pipeline", "router", "extractor",
+                                  "retriever", "adapter", "module", "framework", "platform",
+                                  "system", "application", "tool", "library", "api"]):
         return "Component"
-    if any(suffix in clean for suffix in ["algorithm", "fusion", "rank", "scoring", "embedding"]):
+    # Algorithms and methods
+    if any(s in clean for s in ["algorithm", "fusion", "rank", "scoring", "embedding",
+                                  "method", "approach", "technique", "model", "network"]):
         return "Algorithm"
-    if any(suffix in clean for suffix in ["metric", "accuracy", "latency", "f1", "precision", "recall"]):
+    # Metrics
+    if any(s in clean for s in ["metric", "accuracy", "latency", "f1", "precision", "recall",
+                                  "score", "rate", "ratio", "percentage", "performance"]):
         return "Metric"
-    if any(suffix in clean for suffix in ["graph", "index", "dataset", "corpus", "chunk", "collection", "metadata"]):
+    # Data structures and storage
+    if any(s in clean for s in ["graph", "index", "dataset", "corpus", "chunk", "collection",
+                                  "database", "store", "registry", "schema", "table", "record",
+                                  "metadata"]):
         return "DataStructure"
     return default
+
 
 
 def _is_valid_entity(name: str) -> bool:
@@ -187,7 +232,29 @@ def _heuristic_entities(
                     )
                 )
 
-    # 2. Match capitalized noun phrases and technical terms
+    # 2. Match names with honorifics (Dr. Elena Vasquez, Prof. James Okonkwo)
+    honorific_pattern = re.compile(r"\b((?:Dr\.|Prof\.|Mr\.|Mrs\.|Ms\.)\s+[A-Z][a-zA-Z0-9_\-]+(?:\s+[A-Z][a-zA-Z0-9_\-]+)*)\b")
+    for match in honorific_pattern.findall(text):
+        canonical = normalize_entity_name(match)
+        if _is_valid_entity(canonical):
+            norm_key = canonical.lower()
+            if norm_key not in seen:
+                seen.add(norm_key)
+                records.append(
+                    EntityRecord(
+                        entity_id=_stable_entity_id(canonical, "Person"),
+                        canonical_name=canonical,
+                        original_mention=match,
+                        entity_type="Person",
+                        confidence=0.92,
+                        document_id=document_id,
+                        chunk_id=chunk_id,
+                        page_number=page_number,
+                        extraction_method="heuristic",
+                    )
+                )
+
+    # 3. Match capitalized noun phrases and technical terms
     pattern = re.compile(r"\b([A-Z][a-zA-Z0-9_\-]+(?:\s+[A-Z][a-zA-Z0-9_\-]+)*)\b")
     for match in pattern.findall(text):
         canonical = normalize_entity_name(match)
@@ -204,13 +271,68 @@ def _heuristic_entities(
                 canonical_name=canonical,
                 original_mention=match,
                 entity_type=etype,
-                confidence=0.75,
+                confidence=0.80,
                 document_id=document_id,
                 chunk_id=chunk_id,
                 page_number=page_number,
                 extraction_method="heuristic",
             )
         )
+
+    # 4. Match domain acronyms and abbreviations (LCOE, GWh, IEA, TW, PV, etc.)
+    acronym_pattern = re.compile(r"\b([A-Z]{2,6})\b")
+    for match in acronym_pattern.findall(text):
+        if match.lower() in STOPWORDS or match in {"THE", "AND", "FOR", "WITH", "THAT", "THIS"}:
+            continue
+        norm_key = match.lower()
+        if norm_key not in seen:
+            seen.add(norm_key)
+            records.append(
+                EntityRecord(
+                    entity_id=_stable_entity_id(match, "Concept"),
+                    canonical_name=match,
+                    original_mention=match,
+                    entity_type="Concept",
+                    confidence=0.82,
+                    document_id=document_id,
+                    chunk_id=chunk_id,
+                    page_number=page_number,
+                    extraction_method="heuristic",
+                )
+            )
+
+    # 5. Match technical compounds with domain noun heads across arbitrary domains
+    domain_heads = (
+        r"cells|panels|batteries|electrolytes|efficiency|storage|capacity|energy|materials?|alloys?|polymers?|elements?|"
+        r"systems?|engines?|platforms?|pipelines?|frameworks?|architectures?|servers?|clients?|clusters?|nodes?|databases?|indexes?|"
+        r"algorithms?|models?|networks?|protocols?|services?|apis?|interfaces?|modules?|components?|libraries?|tools?|"
+        r"processes?|reactions?|compounds?|molecules?|proteins?|genes?|enzymes?|acids?|drugs?|vaccines?|treatments?|therapies?|"
+        r"symptoms?|diseases?|disorders?|syndromes?|infections?|viruses?|bacteria?|pathogens?|sensors?|devices?|"
+        r"agreements?|contracts?|treaties?|statutes?|regulations?|policies?|divisions?|consortiums?|corporations?|companies?|"
+        r"portfolios?|assets?|liabilities?|revenues?|expenses?|currencies?|equities?|shares?|metrics?|standards?"
+    )
+    compound_pattern = re.compile(rf"\b([a-z0-9_\-]+(?:\s+[a-z0-9_\-]+){{1,3}}\s+(?:{domain_heads}))\b", re.I)
+    for match in compound_pattern.findall(text):
+        canonical = normalize_entity_name(match)
+        if _is_valid_entity(canonical):
+            norm_key = canonical.lower()
+            if norm_key not in seen:
+                seen.add(norm_key)
+                etype = infer_entity_type(canonical, default="Technology")
+                records.append(
+                    EntityRecord(
+                        entity_id=_stable_entity_id(canonical, etype),
+                        canonical_name=canonical,
+                        original_mention=match,
+                        entity_type=etype,
+                        confidence=0.78,
+                        document_id=document_id,
+                        chunk_id=chunk_id,
+                        page_number=page_number,
+                        extraction_method="heuristic",
+                    )
+                )
+
     return records
 
 
@@ -292,6 +414,35 @@ def _heuristic_relationships(
                             )
                             break
 
+        # Also connect co-occurring entities within the sentence that had no explicit predicate matched
+        if len(present) >= 2:
+            for i in range(len(present) - 1):
+                source = present[i]
+                target = present[i + 1]
+                pair_key = (source.entity_id, "RELATED_TO", target.entity_id)
+                rev_key = (target.entity_id, "RELATED_TO", source.entity_id)
+                if pair_key not in seen_rels and rev_key not in seen_rels:
+                    seen_rels.add(pair_key)
+                    rel_id = hashlib.sha256(
+                        f"{source.entity_id}:RELATED_TO:{target.entity_id}:{sentence[:80]}".encode("utf-8")
+                    ).hexdigest()
+                    relationships.append(
+                        RelationshipRecord(
+                            relationship_id=rel_id,
+                            source_entity_id=source.entity_id,
+                            source_entity_name=source.canonical_name,
+                            target_entity_id=target.entity_id,
+                            target_entity_name=target.canonical_name,
+                            relationship_type="RELATED_TO",
+                            confidence=0.70,
+                            source_document_id=document_id,
+                            source_chunk_id=chunk_id,
+                            page_number=page_number,
+                            extraction_method="heuristic",
+                            source_text=sentence.strip()[:350],
+                        )
+                    )
+
     # If no sentence-level relationships were found but multiple entities exist, extract high-confidence domain connections
     if not relationships and len(entities) >= 2:
         source = entities[0]
@@ -331,8 +482,12 @@ class EntityRelationshipExtractor:
     def __init__(self, llm_service: OllamaLLMService, entity_categories: list[str] | None = None) -> None:
         self.llm_service = llm_service
         self.entity_categories = entity_categories or [
-            "Technology", "Architecture", "Component", "DataStructure", "Algorithm", "Metric", "System", "Concept"
+            # Technical / software domain
+            "Technology", "Architecture", "Component", "DataStructure", "Algorithm", "Metric", "System",
+            # General-purpose categories for arbitrary documents
+            "Person", "Organization", "Location", "Event", "Product", "Concept",
         ]
+
 
     def _parse_json(self, output: str) -> dict:
         try:
@@ -417,3 +572,4 @@ class EntityRelationshipExtractor:
             entities = _heuristic_entities(text, self.entity_categories, document_id=document_id, chunk_id=chunk_id, page_number=page_number)
             relationships = _heuristic_relationships(text, entities, document_id=document_id, chunk_id=chunk_id, page_number=page_number)
             return ExtractionResult(entities=entities, relationships=relationships, used_fallback=True)
+

@@ -5,6 +5,42 @@ from pathlib import Path
 import os
 
 
+def _load_dotenv(override: bool = False, env_file: Path | None = None) -> None:
+    if env_file is not None and env_file.is_file():
+        candidate_paths = (env_file,)
+    else:
+        project_env = Path(__file__).resolve().parents[3] / ".env"
+        cwd_env = Path.cwd() / ".env"
+        candidate_paths = (project_env, cwd_env)
+
+    for candidate in candidate_paths:
+        if candidate.is_file():
+            # 1. Prefer python-dotenv for complete spec compliance
+            try:
+                from dotenv import load_dotenv
+                load_dotenv(dotenv_path=candidate, override=override)
+                return
+            except Exception:
+                pass
+            # 2. Fallback parser if dotenv import fails
+            try:
+                for line in candidate.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k and (override or k not in os.environ):
+                        os.environ[k] = v
+            except Exception:
+                pass
+            break
+
+
+_load_dotenv(override=False)
+
+
 def _env(name: str, default: str) -> str:
     value = os.getenv(name)
     return default if value is None or value == "" else value
@@ -48,11 +84,16 @@ class AppSettings:
     qdrant_api_key: str = field(default_factory=lambda: _env("QDRANT_API_KEY", ""))
     qdrant_collection: str = field(default_factory=lambda: _env("QDRANT_COLLECTION", "rag_chunks"))
 
+    llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "gemini").lower().strip())
+    gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "")).strip())
+    gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash").strip())
+    gemini_timeout_seconds: int = field(default_factory=lambda: _env_int("GEMINI_TIMEOUT_SECONDS", 60))
+
     ollama_base_url: str = field(default_factory=lambda: _env("OLLAMA_BASE_URL", "http://localhost:11434"))
     ollama_model: str = field(default_factory=lambda: _env("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_K_M"))
     ollama_timeout_seconds: int = field(default_factory=lambda: _env_int("OLLAMA_TIMEOUT_SECONDS", 120))
     ollama_retries: int = field(default_factory=lambda: _env_int("OLLAMA_RETRIES", 2))
-    llm_mock_mode: bool = field(default_factory=lambda: _env_bool("LLM_MOCK_MODE", True))
+    llm_mock_mode: bool = field(default_factory=lambda: _env_bool("LLM_MOCK_MODE", False))
 
     embedding_model: str = field(default_factory=lambda: _env("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"))
     chunk_size: int = field(default_factory=lambda: _env_int("CHUNK_SIZE", 900))
@@ -86,6 +127,8 @@ class AppSettings:
             raise ValueError("EVALUATION_TIMEOUT must be positive")
         if self.upload_size_limit_mb <= 0:
             raise ValueError("UPLOAD_SIZE_LIMIT_MB must be positive")
+        if self.gemini_timeout_seconds <= 0:
+            raise ValueError("GEMINI_TIMEOUT_SECONDS must be positive")
         if not self.log_level:
             raise ValueError("LOG_LEVEL must not be empty")
 
@@ -95,15 +138,21 @@ class AppSettings:
         self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def from_env(cls) -> "AppSettings":
+    def from_env(cls, override: bool = False, env_file: Path | None = None) -> "AppSettings":
+        _load_dotenv(override=override, env_file=env_file)
         settings = cls()
         settings.validate()
         settings.ensure_directories()
         return settings
 
+    def __repr__(self) -> str:
+        d = self.to_dict()
+        items = ", ".join(f"{k}={v!r}" for k, v in d.items())
+        return f"AppSettings({items})"
+
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
-        for key in ("neo4j_password", "qdrant_api_key"):
+        for key in ("neo4j_password", "qdrant_api_key", "gemini_api_key"):
             data[key] = "***" if data.get(key) else ""
         data["app_data_dir"] = str(self.app_data_dir)
         data["upload_dir"] = str(self.upload_dir)
@@ -111,5 +160,7 @@ class AppSettings:
         return data
 
 
-def get_settings() -> AppSettings:
-    return AppSettings.from_env()
+def get_settings(override: bool = False, env_file: Path | None = None) -> AppSettings:
+    return AppSettings.from_env(override=override, env_file=env_file)
+
+

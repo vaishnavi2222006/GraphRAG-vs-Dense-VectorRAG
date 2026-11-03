@@ -7,7 +7,13 @@ import streamlit as st
 
 from rag_benchmark_lab.app import get_context
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
-from rag_benchmark_lab.utils.ui import inject_custom_css, render_dev_mode_banner, render_lab_header
+from rag_benchmark_lab.utils.ui import (
+    format_latency,
+    format_metric,
+    inject_custom_css,
+    render_dev_mode_banner,
+    render_lab_header,
+)
 
 # page config handled in main app
 inject_custom_css()
@@ -142,16 +148,16 @@ with kpi_cols[0]:
     st.metric("Queries Analyzed", len(df))
 with kpi_cols[1]:
     mean_faith = df["faithfulness"].dropna().mean() if not df["faithfulness"].dropna().empty else None
-    st.metric("Avg Faithfulness", f"{mean_faith:.3f}" if mean_faith is not None else "N/A")
+    st.metric("Avg Faithfulness", format_metric(mean_faith, fallback="N/A", precision=3) if (mean_faith is not None and not pd.isna(mean_faith)) else "N/A")
 with kpi_cols[2]:
     mean_rel = df["answer_relevancy"].dropna().mean() if not df["answer_relevancy"].dropna().empty else None
-    st.metric("Avg Relevancy", f"{mean_rel:.3f}" if mean_rel is not None else "N/A")
+    st.metric("Avg Relevancy", format_metric(mean_rel, fallback="N/A", precision=3) if (mean_rel is not None and not pd.isna(mean_rel)) else "N/A")
 with kpi_cols[3]:
     mean_rec = df["retrieval_recall_at_k"].dropna().mean() if not df["retrieval_recall_at_k"].dropna().empty else None
-    st.metric("Avg Recall@K", f"{mean_rec:.3f}" if mean_rec is not None else "N/A")
+    st.metric("Avg Recall@K", format_metric(mean_rec, fallback="N/A", precision=3) if (mean_rec is not None and not pd.isna(mean_rec)) else "N/A")
 with kpi_cols[4]:
-    mean_lat = df["total_latency_ms"].mean() if not df["total_latency_ms"].empty else None
-    st.metric("Mean Latency", f"{mean_lat:.1f} ms" if mean_lat is not None else "N/A")
+    mean_lat = df["total_latency_ms"].dropna().mean() if not df["total_latency_ms"].dropna().empty else None
+    st.metric("Mean Latency", format_latency(mean_lat, fallback="N/A", precision=1) if (mean_lat is not None and not pd.isna(mean_lat)) else "N/A")
 
 st.markdown("---")
 

@@ -1,0 +1,57 @@
+
+digraph ComparisonUI {
+    rankdir=TB;
+    node [shape=box, style="rounded,filled", fillcolor="#f8fafc", fontname="Helvetica", fontsize=9, color="#334155"];
+
+    subgraph cluster_comp {
+        label = "3-Way Side-by-Side Comparison Sandbox (Page 4)";
+        style=filled;
+        color="#94a3b8";
+        fillcolor="#f8fafc";
+        fontname="Helvetica-Bold";
+
+        Prompt [label="Research Prompt Input:
+'Explain how quantum annealing differs from gate-based quantum computing and identify key hardware developers'", shape=rect, fillcolor="#ffffff", color="#2563eb"];
+        
+        subgraph cluster_panels {
+            label = "Concurrent Execution Panels";
+            style=invis;
+
+            Col1 [label="Dense Vector RAG (Qdrant)
+------------------------------------
+Strategy: Cosine Top-K (k=5)
+Retrieved: 5 Text Chunks
+Latency: 38.4 ms
+Accuracy: High for direct definitions
+Weakness: Missed cross-document co-references", fillcolor="#eff6ff", color="#3b82f6"];
+            Col2 [label="GraphRAG (Neo4j)
+------------------------------------
+Strategy: Multi-Hop Cypher Traversal
+Retrieved: 12 Entities + 8 Relationships
+Latency: 142.1 ms
+Accuracy: Superior multi-hop entity link
+Identified: D-Wave -> Annealing -> DW2000Q", fillcolor="#f5f3ff", color="#8b5cf6"];
+            Col3 [label="Hybrid RAG (RRF Fusion)
+------------------------------------
+Strategy: Reciprocal Rank Fusion (k=60)
+Retrieved: Fused Vector + Graph Triples
+Latency: 168.5 ms
+Accuracy: Highest overall fidelity & context
+Ranked top candidate chunk at Rank #1", fillcolor="#f0fdf4", color="#22c55e"];
+        }
+
+        MetricsTable [label="Comparative Summary Matrix:
+Metric                  | Vector RAG | GraphRAG | Hybrid RAG
+Retrieval Latency (ms)  | 38.4 ms    | 142.1 ms | 168.5 ms
+Context Recall          | 0.72       | 0.84     | 0.94
+Faithfulness Score      | 0.88       | 0.91     | 0.96
+Multi-Hop Link Coverage | 40%        | 92%      | 96%", shape=rect, fillcolor="#fef9c3", color="#ca8a04"];
+
+        Prompt -> Col1;
+        Prompt -> Col2;
+        Prompt -> Col3;
+        Col1 -> MetricsTable;
+        Col2 -> MetricsTable;
+        Col3 -> MetricsTable;
+    }
+}

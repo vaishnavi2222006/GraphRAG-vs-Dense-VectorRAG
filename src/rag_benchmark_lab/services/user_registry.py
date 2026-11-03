@@ -16,6 +16,10 @@ from ..schemas.auth import (
     MessageRecord,
     UserRecord,
 )
+from ..schemas.comparison import (
+    ComparisonRunRecord,
+    ComparisonStrategyResultRecord,
+)
 
 # Try argon2 first, fallback to bcrypt, finally use PBKDF2 (stdlib)
 try:
@@ -163,12 +167,52 @@ class UserRegistry:
                     PRIMARY KEY (kb_id, document_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS comparison_runs (
+                    run_id TEXT PRIMARY KEY,
+                    user_id TEXT REFERENCES users(user_id),
+                    kb_id TEXT REFERENCES knowledge_bases(kb_id),
+                    query TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    strategies_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS comparison_strategy_results (
+                    result_id TEXT PRIMARY KEY,
+                    run_id TEXT NOT NULL REFERENCES comparison_runs(run_id) ON DELETE CASCADE,
+                    strategy TEXT NOT NULL,
+                    strategy_label TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    error_message TEXT,
+                    retrieval_latency_ms REAL,
+                    generation_latency_ms REAL,
+                    total_latency_ms REAL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    model_name TEXT,
+                    citations_json TEXT NOT NULL DEFAULT '[]',
+                    evidence_sources_json TEXT NOT NULL DEFAULT '[]',
+                    graph_evidence_json TEXT,
+                    warnings_json TEXT NOT NULL DEFAULT '[]',
+                    errors_json TEXT NOT NULL DEFAULT '[]',
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_kb_user ON knowledge_bases(user_id);
                 CREATE INDEX IF NOT EXISTS idx_conv_user ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_conv_kb ON conversations(kb_id);
                 CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversation_id);
                 CREATE INDEX IF NOT EXISTS idx_msg_user ON messages(user_id);
                 CREATE INDEX IF NOT EXISTS idx_kb_docs ON kb_documents(kb_id);
+                CREATE INDEX IF NOT EXISTS idx_comp_user ON comparison_runs(user_id);
+                CREATE INDEX IF NOT EXISTS idx_comp_kb ON comparison_runs(kb_id);
+                CREATE INDEX IF NOT EXISTS idx_comp_created ON comparison_runs(created_at);
+                CREATE INDEX IF NOT EXISTS idx_comp_strat_run ON comparison_strategy_results(run_id);
+                CREATE INDEX IF NOT EXISTS idx_comp_strat_strat ON comparison_strategy_results(strategy);
             """)
 
     # ─── User Management ───────────────────────────────────────────────────────
@@ -506,3 +550,250 @@ class UserRegistry:
 
     def validate_password(self, password: str) -> list[str]:
         return _validate_password(password)
+
+    # ─── Comparison History Management ──────────────────────────────────────────
+
+    def save_comparison_run(
+        self,
+        run: ComparisonRunRecord,
+        results: list[ComparisonStrategyResultRecord] | None = None,
+    ) -> str:
+        """Persist a full comparison run and its strategy results atomically."""
+        strat_results = results if results is not None else run.results
+        with self._connect() as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """INSERT INTO comparison_runs (
+                    run_id, user_id, kb_id, query, status,
+                    config_json, strategies_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    query=excluded.query,
+                    status=excluded.status,
+                    config_json=excluded.config_json,
+                    strategies_json=excluded.strategies_json,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    run.run_id,
+                    run.user_id,
+                    run.kb_id,
+                    run.query,
+                    run.status,
+                    json.dumps(run.config, ensure_ascii=False),
+                    json.dumps(run.strategies, ensure_ascii=False),
+                    run.created_at or now,
+                    run.updated_at or now,
+                ),
+            )
+            conn.execute("DELETE FROM comparison_strategy_results WHERE run_id = ?", (run.run_id,))
+            for sr in strat_results:
+                conn.execute(
+                    """INSERT INTO comparison_strategy_results (
+                        result_id, run_id, strategy, strategy_label, status,
+                        answer, error_message, retrieval_latency_ms, generation_latency_ms, total_latency_ms,
+                        prompt_tokens, completion_tokens, model_name,
+                        citations_json, evidence_sources_json, graph_evidence_json,
+                        warnings_json, errors_json, metadata_json, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        sr.result_id,
+                        run.run_id,
+                        sr.strategy,
+                        sr.strategy_label,
+                        sr.status,
+                        sr.answer,
+                        sr.error_message,
+                        sr.retrieval_latency_ms,
+                        sr.generation_latency_ms,
+                        sr.total_latency_ms,
+                        sr.prompt_tokens,
+                        sr.completion_tokens,
+                        sr.model_name,
+                        json.dumps(sr.citations, ensure_ascii=False),
+                        json.dumps(sr.evidence_sources, ensure_ascii=False),
+                        json.dumps(sr.graph_evidence, ensure_ascii=False) if sr.graph_evidence else None,
+                        json.dumps(sr.warnings, ensure_ascii=False),
+                        json.dumps(sr.errors, ensure_ascii=False),
+                        json.dumps(sr.metadata, ensure_ascii=False),
+                        sr.created_at or now,
+                    ),
+                )
+        return run.run_id
+
+    def get_comparison_run(self, run_id: str, user_id: str | None = None) -> ComparisonRunRecord | None:
+        """Retrieve a specific comparison run and its strategy results."""
+        with self._connect() as conn:
+            query = """
+                SELECT cr.*, kb.name as kb_name
+                FROM comparison_runs cr
+                LEFT JOIN knowledge_bases kb ON cr.kb_id = kb.kb_id
+                WHERE cr.run_id = ?
+            """
+            params: list[Any] = [run_id]
+            if user_id:
+                query += " AND cr.user_id = ?"
+                params.append(user_id)
+            row = conn.execute(query, params).fetchone()
+            if not row:
+                return None
+
+            results_rows = conn.execute(
+                "SELECT * FROM comparison_strategy_results WHERE run_id = ? ORDER BY rowid ASC",
+                (run_id,),
+            ).fetchall()
+
+        strat_results = [
+            ComparisonStrategyResultRecord(
+                result_id=sr["result_id"],
+                run_id=sr["run_id"],
+                strategy=sr["strategy"],
+                strategy_label=sr["strategy_label"],
+                status=sr["status"],
+                answer=sr["answer"],
+                error_message=sr["error_message"],
+                retrieval_latency_ms=sr["retrieval_latency_ms"],
+                generation_latency_ms=sr["generation_latency_ms"],
+                total_latency_ms=sr["total_latency_ms"],
+                prompt_tokens=sr["prompt_tokens"],
+                completion_tokens=sr["completion_tokens"],
+                model_name=sr["model_name"],
+                citations=json.loads(sr["citations_json"] or "[]"),
+                evidence_sources=json.loads(sr["evidence_sources_json"] or "[]"),
+                graph_evidence=json.loads(sr["graph_evidence_json"]) if sr["graph_evidence_json"] else None,
+                warnings=json.loads(sr["warnings_json"] or "[]"),
+                errors=json.loads(sr["errors_json"] or "[]"),
+                metadata=json.loads(sr["metadata_json"] or "{}"),
+                created_at=sr["created_at"],
+            )
+            for sr in results_rows
+        ]
+
+        return ComparisonRunRecord(
+            run_id=row["run_id"],
+            user_id=row["user_id"],
+            kb_id=row["kb_id"],
+            query=row["query"],
+            status=row["status"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            config=json.loads(row["config_json"] or "{}"),
+            strategies=json.loads(row["strategies_json"] or "[]"),
+            results=strat_results,
+            kb_name=row["kb_name"] if "kb_name" in row.keys() else None,
+        )
+
+    def list_comparison_runs(
+        self,
+        user_id: str | None = None,
+        kb_id: str | None = None,
+        status: str | None = None,
+        strategy: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        limit: int = 100,
+    ) -> list[ComparisonRunRecord]:
+        """List comparison runs matching optional filters."""
+        with self._connect() as conn:
+            query = """
+                SELECT DISTINCT cr.*, kb.name as kb_name
+                FROM comparison_runs cr
+                LEFT JOIN knowledge_bases kb ON cr.kb_id = kb.kb_id
+            """
+            conditions: list[str] = []
+            params: list[Any] = []
+
+            if strategy:
+                query += " JOIN comparison_strategy_results csr ON cr.run_id = csr.run_id"
+                conditions.append("csr.strategy = ?")
+                params.append(strategy)
+
+            if user_id:
+                conditions.append("cr.user_id = ?")
+                params.append(user_id)
+
+            if kb_id:
+                conditions.append("cr.kb_id = ?")
+                params.append(kb_id)
+
+            if status:
+                conditions.append("cr.status = ?")
+                params.append(status)
+
+            if start_date:
+                conditions.append("cr.created_at >= ?")
+                params.append(start_date)
+
+            if end_date:
+                conditions.append("cr.created_at <= ?")
+                params.append(end_date)
+
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+
+            query += " ORDER BY cr.created_at DESC LIMIT ?"
+            params.append(limit)
+
+            rows = conn.execute(query, params).fetchall()
+
+            runs = []
+            for row in rows:
+                run_id = row["run_id"]
+                res_rows = conn.execute(
+                    "SELECT * FROM comparison_strategy_results WHERE run_id = ? ORDER BY rowid ASC",
+                    (run_id,),
+                ).fetchall()
+                strat_results = [
+                    ComparisonStrategyResultRecord(
+                        result_id=sr["result_id"],
+                        run_id=sr["run_id"],
+                        strategy=sr["strategy"],
+                        strategy_label=sr["strategy_label"],
+                        status=sr["status"],
+                        answer=sr["answer"],
+                        error_message=sr["error_message"],
+                        retrieval_latency_ms=sr["retrieval_latency_ms"],
+                        generation_latency_ms=sr["generation_latency_ms"],
+                        total_latency_ms=sr["total_latency_ms"],
+                        prompt_tokens=sr["prompt_tokens"],
+                        completion_tokens=sr["completion_tokens"],
+                        model_name=sr["model_name"],
+                        citations=json.loads(sr["citations_json"] or "[]"),
+                        evidence_sources=json.loads(sr["evidence_sources_json"] or "[]"),
+                        graph_evidence=json.loads(sr["graph_evidence_json"]) if sr["graph_evidence_json"] else None,
+                        warnings=json.loads(sr["warnings_json"] or "[]"),
+                        errors=json.loads(sr["errors_json"] or "[]"),
+                        metadata=json.loads(sr["metadata_json"] or "{}"),
+                        created_at=sr["created_at"],
+                    )
+                    for sr in res_rows
+                ]
+                runs.append(
+                    ComparisonRunRecord(
+                        run_id=row["run_id"],
+                        user_id=row["user_id"],
+                        kb_id=row["kb_id"],
+                        query=row["query"],
+                        status=row["status"],
+                        created_at=row["created_at"],
+                        updated_at=row["updated_at"],
+                        config=json.loads(row["config_json"] or "{}"),
+                        strategies=json.loads(row["strategies_json"] or "[]"),
+                        results=strat_results,
+                        kb_name=row["kb_name"] if "kb_name" in row.keys() else None,
+                    )
+                )
+            return runs
+
+    def delete_comparison_run(self, run_id: str, user_id: str | None = None) -> bool:
+        """Delete a comparison run and its cascade strategy results."""
+        with self._connect() as conn:
+            if user_id:
+                row = conn.execute("SELECT run_id FROM comparison_runs WHERE run_id = ? AND user_id = ?", (run_id, user_id)).fetchone()
+            else:
+                row = conn.execute("SELECT run_id FROM comparison_runs WHERE run_id = ?", (run_id,)).fetchone()
+            if not row:
+                return False
+            conn.execute("DELETE FROM comparison_strategy_results WHERE run_id = ?", (run_id,))
+            conn.execute("DELETE FROM comparison_runs WHERE run_id = ?", (run_id,))
+        return True

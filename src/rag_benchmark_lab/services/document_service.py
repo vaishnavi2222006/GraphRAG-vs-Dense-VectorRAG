@@ -49,7 +49,30 @@ class DocumentService:
 
     def ingest_bytes(self, document_name: str, raw_bytes: bytes, source_path: str | None = None) -> IngestionOutcome:
         validate_upload_size(raw_bytes, self.upload_size_limit_mb)
-        loaded = load_bytes(document_name, raw_bytes, source_path=source_path)
+        try:
+            loaded = load_bytes(document_name, raw_bytes, source_path=source_path)
+        except Exception as exc:
+            content_hash = hashlib.sha256(raw_bytes).hexdigest()
+            doc_id = hashlib.sha256(content_hash.encode("utf-8")).hexdigest()
+            doc = DocumentRecord(
+                document_id=doc_id,
+                document_name=document_name,
+                content_hash=content_hash,
+                source_path=source_path,
+                file_size=len(raw_bytes),
+                status=DocumentStatus.FAILED,
+                error_message=f"Extraction failure: {exc}",
+            )
+            self.registry.upsert_document(doc)
+            self.registry.mark_status(doc.document_id, doc.status, doc.error_message)
+            return IngestionOutcome(
+                document=doc,
+                chunks=[],
+                entity_count=0,
+                relationship_count=0,
+                warnings=["extraction_failure"],
+                errors=[str(exc)],
+            )
         content_hash = loaded.content_hash
         existing = self.registry.get_document_by_hash(content_hash)
         if existing and existing.get("status") == DocumentStatus.INDEXED.value:
@@ -89,6 +112,8 @@ class DocumentService:
         errors: list[str] = []
         try:
             for page in loaded.pages:
+                if not page.text or not page.text.strip():
+                    continue
                 page_chunks = chunk_document(
                     document_id=document_id,
                     document_name=document_name,
@@ -100,6 +125,30 @@ class DocumentService:
                     extra_metadata={"mime_type": loaded.mime_type, "page_number": page.page_number},
                 )
                 chunks.extend(page_chunks)
+
+            # Re-index chunks globally so chunk_index is strictly sequential across pages
+            for idx, chunk in enumerate(chunks):
+                chunk.chunk_index = idx
+                chunk.chunk_id = hashlib.sha256(f"{document_id}:{idx}:{chunk.content_hash}".encode("utf-8")).hexdigest()
+
+            if not chunks:
+                document.chunk_count = 0
+                document.entity_count = 0
+                document.relationship_count = 0
+                document.status = DocumentStatus.FAILED
+                document.error_message = "Document contains no extractable text"
+                document.updated_at = datetime.now(timezone.utc).isoformat()
+                self.registry.upsert_document(document)
+                self.registry.mark_status(document.document_id, document.status, document.error_message)
+                return IngestionOutcome(
+                    document=document,
+                    chunks=[],
+                    entity_count=0,
+                    relationship_count=0,
+                    warnings=["empty_or_unextractable_document"],
+                    errors=["Document contains no extractable text"],
+                )
+
             self.registry.store_chunks(chunks)
 
             embedding_result = self.embedding_service.embed_texts([chunk.text for chunk in chunks])
@@ -110,6 +159,8 @@ class DocumentService:
 
         try:
             self.neo4j_store.upsert_document(document_id, document_name)
+            if hasattr(self.neo4j_store, "upsert_chunks"):
+                self.neo4j_store.upsert_chunks(chunks)
             for chunk in chunks:
                 extraction = self.extractor.extract(chunk.text, document_id=document_id, chunk_id=chunk.chunk_id, page_number=chunk.page_number)
                 entities.extend(extraction.entities)

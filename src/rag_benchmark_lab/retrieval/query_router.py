@@ -13,18 +13,26 @@ RELATIONSHIP_TERMS = {
     "between",
     "linked",
     "associated",
-    "which",
-    "how",
-    "why",
     "multi-hop",
-    "compare",
-    "compare",
-    "through",
+    "hierarchy",
+    "interact",
+    "interaction",
+    "path",
+    "dependencies",
+    "dependency",
+    "affects",
+    "impacts",
+    "connects",
 }
 
 
-def route_query(question: str, manual_strategy: RetrievalStrategy | None = None) -> RoutingDecision:
+def route_query(question: str, manual_strategy: RetrievalStrategy | str | None = None) -> RoutingDecision:
     if manual_strategy is not None:
+        if isinstance(manual_strategy, str):
+            try:
+                manual_strategy = RetrievalStrategy(manual_strategy.upper())
+            except ValueError:
+                manual_strategy = RetrievalStrategy.VECTOR
         return RoutingDecision(
             selected_strategy=manual_strategy,
             rationale=f"Manual override selected {manual_strategy.value}",

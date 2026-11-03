@@ -1,0 +1,39 @@
+
+digraph ChatUI {
+    rankdir=TB;
+    node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=9];
+
+    subgraph cluster_chat {
+        label = "Conversational Chat Lab Interface with Grounded Citations (Page 3)";
+        style=filled;
+        color="#cbd5e1";
+        fillcolor="#f8fafc";
+        fontname="Helvetica-Bold";
+
+        UserMsg [label="User Query: 'What is the physical qubit count and gate fidelity of the Osprey processor?'", fillcolor="#dbeafe", color="#2563eb", shape=rect];
+        
+        RouterBadge [label="[Query Router Decision: FACTUAL_DIRECT -> Executed: DENSE_VECTOR_RAG (Confidence: 0.92)]", shape=ellipse, fillcolor="#fef3c7", color="#d97706"];
+        
+        BotMsg [label="Assistant Response:
+According to the IBM Quantum technical roadmap, the Osprey processor features 1,124 physical qubits
+operating with a single-qubit gate fidelity of 99.85% and two-qubit fidelity of 99.2%.", fillcolor="#ffffff", color="#475569", shape=rect];
+        
+        subgraph cluster_citations {
+            label = "Clickable Grounded Provenance Citations";
+            style=filled;
+            color="#e2e8f0";
+            fillcolor="#f1f5f9";
+            
+            Cit1 [label="[Doc: 09_Service_Architecture.pdf | Page: 3 | Chunk #14 | Score: 0.942]", fillcolor="#dcfce7", color="#16a34a"];
+            Cit2 [label="[Doc: 15_RAG_Glossary.pdf | Page: 1 | Chunk #4 | Score: 0.887]", fillcolor="#dcfce7", color="#16a34a"];
+        }
+
+        Telemetry [label="Per-Turn Telemetry: Retrieval Latency: 22.4 ms | Generation Latency: 310.2 ms | Total Latency: 332.6 ms | Engine: Ollama Llama 3.1 8B", fillcolor="#f3e8ff", color="#7e22ce"];
+
+        UserMsg -> RouterBadge -> BotMsg;
+        BotMsg -> Cit1;
+        BotMsg -> Cit2;
+        Cit1 -> Telemetry;
+        Cit2 -> Telemetry;
+    }
+}

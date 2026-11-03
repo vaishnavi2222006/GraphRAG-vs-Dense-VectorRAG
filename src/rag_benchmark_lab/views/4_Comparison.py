@@ -8,6 +8,8 @@ from rag_benchmark_lab.app import get_context
 from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
+    format_latency,
+    format_metric,
     inject_custom_css,
     render_dev_mode_banner,
     render_lab_header,
@@ -136,10 +138,10 @@ if comp_btn and question_text.strip():
             st.markdown("**Telemetry:**")
             mcol1, mcol2 = st.columns(2)
             with mcol1:
-                st.caption(f"⏱️ Retrieval: **{res.retrieval_latency_ms:.1f} ms**" if res.retrieval_latency_ms else "N/A")
-                st.caption(f"⚡ Generation: **{res.generation_latency_ms:.1f} ms**" if res.generation_latency_ms else "N/A")
+                st.caption(f"⏱️ Retrieval: **{format_latency(res.retrieval_latency_ms, fallback='N/A', precision=1)}**")
+                st.caption(f"⚡ Generation: **{format_latency(res.generation_latency_ms, fallback='N/A', precision=1, treat_zero_as_unavailable=True)}**")
             with mcol2:
-                st.caption(f"⌛ Total: **{res.total_latency_ms:.1f} ms**" if res.total_latency_ms else "N/A")
+                st.caption(f"⌛ Total: **{format_latency(res.total_latency_ms, fallback='N/A', precision=1, treat_zero_as_unavailable=True)}**")
                 st.caption(f"📦 Passages: **{len(res.retrieved_sources)}**")
 
             # Supporting Citations

@@ -65,7 +65,14 @@ def load_bytes(document_name: str, raw_bytes: bytes, source_path: str | None = N
         if DocxDocument is None:
             raise RuntimeError("python-docx is required to parse DOCX documents")
         document = DocxDocument(BytesIO(raw_bytes))
-        pages = [LoadedPage(page_number=1, text="\n".join(paragraph.text for paragraph in document.paragraphs))]
+        paragraphs_text = [paragraph.text for paragraph in document.paragraphs if paragraph.text.strip()]
+        for table in document.tables:
+            for row in table.rows:
+                row_text = " | ".join(cell.text.strip() for cell in row.cells if cell.text.strip())
+                if row_text:
+                    paragraphs_text.append(row_text)
+        text = "\n\n".join(paragraphs_text)
+        pages = [LoadedPage(page_number=1, text=text)]
         return LoadedDocument(document_name=document_name, source_path=source_path, mime_type=mime_type, raw_bytes=raw_bytes, pages=pages)
 
     text = raw_bytes.decode("utf-8", errors="replace")

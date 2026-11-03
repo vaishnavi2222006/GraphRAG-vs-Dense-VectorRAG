@@ -19,6 +19,8 @@ class RetrievalStrategy(str, Enum):
     GRAPH = "GRAPH"
     HYBRID = "HYBRID"
     ALL = "ALL"
+    DIRECT = "DIRECT"
+
 
 
 @dataclass(slots=True)

@@ -78,6 +78,14 @@ class QdrantStore:
                 collection_name=self.collection_name,
                 vectors_config=qmodels.VectorParams(size=vector_size, distance=qmodels.Distance.COSINE),
             )
+            try:
+                client.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name="document_id",
+                    field_schema=qmodels.PayloadSchemaType.KEYWORD,
+                )
+            except Exception:
+                pass
 
     def upsert_chunks(self, chunks: list[ChunkRecord], embeddings: list[list[float]]) -> None:
         if len(chunks) != len(embeddings):
@@ -98,6 +106,10 @@ class QdrantStore:
         client.upsert(collection_name=self.collection_name, points=points)
 
     def search(self, vector: list[float], top_k: int, document_ids: list[str] | None = None) -> list[RetrievedChunk]:
+        # Strict corpus isolation: if document_ids was passed as empty list, return nothing
+        if document_ids is not None and len(document_ids) == 0:
+            return []
+
         client = self._get_client()
         # If collection does not exist yet (no documents ingested), return empty results
         try:
@@ -105,6 +117,8 @@ class QdrantStore:
                 return []
         except Exception:
             return []
+
+        doc_id_set = set(document_ids) if document_ids is not None else None
         filter_ = None
         if document_ids and qmodels is not None:
             filter_ = qmodels.Filter(
@@ -115,7 +129,7 @@ class QdrantStore:
                 response = client.query_points(
                     collection_name=self.collection_name,
                     query=vector,
-                    limit=top_k,
+                    limit=max(top_k * 2, top_k),
                     query_filter=filter_,
                 )
                 results = response.points
@@ -123,7 +137,7 @@ class QdrantStore:
                 results = client.search(
                     collection_name=self.collection_name,
                     query_vector=vector,
-                    limit=top_k,
+                    limit=max(top_k * 2, top_k),
                     query_filter=filter_,
                 )
         except Exception:
@@ -131,10 +145,14 @@ class QdrantStore:
         retrieved: list[RetrievedChunk] = []
         for result in results:
             payload = result.payload or {}
+            doc_id = str(payload.get("document_id", ""))
+            # Strict secondary guard: ensure chunk belongs to selected corpus
+            if doc_id_set is not None and doc_id not in doc_id_set:
+                continue
             retrieved.append(
                 RetrievedChunk(
                     chunk_id=str(payload.get("chunk_id") or result.id),
-                    document_id=str(payload.get("document_id", "")),
+                    document_id=doc_id,
                     document_name=str(payload.get("document_name", "")),
                     chunk_index=int(payload.get("chunk_index", 0)),
                     text=str(payload.get("text", "")),
@@ -144,6 +162,8 @@ class QdrantStore:
                     metadata=payload.get("metadata", {}) or {},
                 )
             )
+            if len(retrieved) >= top_k:
+                break
         return retrieved
 
     def delete_document(self, document_id: str) -> None:

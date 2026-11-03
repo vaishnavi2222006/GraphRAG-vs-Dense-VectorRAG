@@ -1,0 +1,44 @@
+
+digraph IngestionUI {
+    rankdir=TB;
+    node [shape=box, style="rounded,filled", fillcolor="#f8fafc", fontname="Helvetica", fontsize=10, color="#334155"];
+    
+    subgraph cluster_card {
+        label = "Streamlit Corpus Management Interface (Page 2)";
+        style=filled;
+        color="#cbd5e1";
+        fillcolor="#f1f5f9";
+        fontname="Helvetica-Bold";
+
+        Drop [label="File Uploader: Drop PDF, TXT, DOCX
+(Supports Multi-Document Domain Corpora)", fillcolor="#ffffff", shape=rect];
+        Status [label="Ingestion Pipeline Pipeline Status:
+[1] Clean & Normalize Text -> [2] Recursive Token Chunker (256 tok, 64 ovlp)
+[3] Embedding (all-MiniLM-L6-v2, 384-d) -> [4] Entity & Relation Extraction", fillcolor="#e0f2fe", shape=rect];
+        
+        subgraph cluster_stores {
+            label = "Dual-Store Persistence Verification";
+            style=filled;
+            color="#e2e8f0";
+            fillcolor="#ffffff";
+            
+            VDB [label="Qdrant Vector DB (Port 6333)
+Collection: rag_chunks
+Indexed Points: 72 Chunks
+Payload: doc_id, text, page_num", shape=cylinder, fillcolor="#ffedd5"];
+            GDB [label="Neo4j Graph DB (Bolt 7687)
+Nodes: 41 Entities, 49 Edges
+Labels: Technology, Concept, Component
+Relations: USES, EVALUATES, INDEXES", shape=cylinder, fillcolor="#ede9fe"];
+        }
+
+        Summary [label="Knowledge Base Summary Card:
+Documents: 3 | Total Chunks: 72 | Entities: 41 | Relationships: 49
+Indexing Status: 100% COMPLETE (Ready for Querying)", fillcolor="#dcfce7", color="#16a34a"];
+        
+        Drop -> Status -> VDB;
+        Status -> GDB;
+        VDB -> Summary;
+        GDB -> Summary;
+    }
+}

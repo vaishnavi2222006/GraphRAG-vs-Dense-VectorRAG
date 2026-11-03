@@ -61,6 +61,9 @@ def sample_dataset() -> list[EvaluationExample]:
             query_id="q1",
             question="What is the primary purpose of the document ingestion pipeline?",
             expected_answer="It validates, chunks, embeds, and indexes documents while preserving provenance.",
+            reference_contexts=[
+                "The document ingestion pipeline validates, chunks, embeds, and indexes documents while preserving provenance metadata."
+            ],
             relevant_document_ids=["sample-doc-1"],
             query_type="factual",
             difficulty="easy",
@@ -71,6 +74,9 @@ def sample_dataset() -> list[EvaluationExample]:
             query_id="q2",
             question="Which retrieval strategy is designed to help when facts are distributed across documents?",
             expected_answer="Hybrid RAG can combine vector and graph evidence for distributed facts.",
+            reference_contexts=[
+                "Hybrid RAG can combine vector and graph evidence for distributed facts across multiple documents."
+            ],
             relevant_document_ids=["sample-doc-1", "sample-doc-2"],
             query_type="relationship",
             difficulty="medium",
@@ -81,6 +87,8 @@ def sample_dataset() -> list[EvaluationExample]:
             query_id="q3",
             question="Which organization is mentioned as introducing the example technology?",
             expected_answer=None,
+            reference_contexts=[],
+            relevant_document_ids=[],
             query_type="ambiguous",
             difficulty="medium",
             expected_reasoning_hops=2,

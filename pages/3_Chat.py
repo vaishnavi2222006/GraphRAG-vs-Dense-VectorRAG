@@ -1,8 +1,8 @@
 """RAG Benchmark Lab — Chat Workspace."""
 from __future__ import annotations
 
-import uuid
 from datetime import datetime, timezone
+import uuid
 
 import streamlit as st
 
@@ -11,8 +11,11 @@ from rag_benchmark_lab.schemas.auth import MessageRecord
 from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
+    format_latency,
+    format_metric,
     inject_custom_css,
     render_dev_mode_banner,
+    render_html,
     render_strategy_badge,
     render_topnav,
 )
@@ -30,21 +33,20 @@ user_id = require_auth()
 context = get_context()
 user_name = get_current_user_name() or "User"
 
-render_dev_mode_banner(context.settings.llm_mock_mode)
-
 # ── Page Header ──────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <div style="margin-bottom: 16px;">
-      <h1 style="font-size: 24px; font-weight: 800; letter-spacing: -0.03em; color: #F5F7FA; margin: 0 0 4px 0;">
-        Chat with Your Documents
-      </h1>
-      <p style="font-size: 13.5px; color: #A0AABC; margin: 0;">
-        Ask questions and get answers grounded in your uploaded documents.
-      </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+render_html(
+    """<div style="margin-top:20px;margin-bottom:18px;">
+<div style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">
+  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);"></span>
+  Interactive Assistant
+</div>
+<h1 style="font-size:28px;font-weight:800;letter-spacing:-0.03em;color:var(--text);margin:0 0 4px 0;">
+  Chat with Your Documents
+</h1>
+<p style="font-size:14px;color:var(--text-muted);margin:0;">
+  Query your knowledge corpus conversationally using selectable retrieval strategies with verifiable grounded citations.
+</p>
+</div>"""
 )
 
 # ── Knowledge Base Validation ────────────────────────────────────────────────
@@ -63,13 +65,13 @@ if active_kb_id not in kb_options:
     st.session_state["active_kb_name"] = kb_options[active_kb_id]
 
 # ── Toolbar: KB Selector + Strategy + Conversation Controls ─────────────────
-tb_col1, tb_col2, tb_col3, tb_col4 = st.columns([2.2, 2.2, 1.2, 1.2], vertical_alignment="center")
+tb_col1, tb_col2, tb_col3, tb_col4 = st.columns([2.4, 2.2, 1.2, 1.2], vertical_alignment="center")
 
 with tb_col1:
     selected_kb_id = st.selectbox(
         "Active Knowledge Base",
         options=list(kb_options.keys()),
-        format_func=lambda x: kb_options[x],
+        format_func=lambda x: f"KB: {kb_options[x]}",
         index=list(kb_options.keys()).index(active_kb_id),
         key="chat_kb_sel",
         label_visibility="collapsed",
@@ -84,9 +86,9 @@ with tb_col1:
 
 with tb_col2:
     STRATEGY_OPTIONS = {
-        "vector": "Vector RAG",
-        "graph": "GraphRAG",
-        "hybrid": "Hybrid RAG",
+        "vector": "Vector RAG (Semantic)",
+        "graph": "GraphRAG (Relational)",
+        "hybrid": "Hybrid RAG (RRF Fusion)",
         "auto": "Auto (Query Router)",
     }
     strategy_key = st.selectbox(
@@ -98,7 +100,7 @@ with tb_col2:
     )
 
 with tb_col3:
-    if st.button("New Chat", use_container_width=True, key="btn_chat_new"):
+    if st.button("New Chat", icon=":material/add:", use_container_width=True, key="btn_chat_new"):
         conv = context.user_registry.create_conversation(
             user_id=user_id,
             kb_id=active_kb_id,
@@ -108,59 +110,57 @@ with tb_col3:
         st.rerun()
 
 with tb_col4:
-    if st.button("History", use_container_width=True, key="btn_chat_history"):
+    if st.button("History", icon=":material/history:", use_container_width=True, key="btn_chat_history"):
         st.session_state["show_conv_list"] = not st.session_state.get("show_conv_list", False)
 
-# Strategy explanation (1 clear sentence)
+# Strategy explanation line
 STRATEGY_EXPLANATIONS = {
-    "vector": "Retrieves semantically similar text passages.",
-    "graph": "Retrieves related entities, relationships, and supporting passages.",
-    "hybrid": "Combines vector and graph retrieval.",
-    "auto": "Automatically selects the best retrieval strategy based on your question.",
+    "vector": "Retrieves semantically similar text passages via dense vector search.",
+    "graph": "Traverses interconnected entity-relationship paths and supporting contexts.",
+    "hybrid": "Fuses dense semantic retrieval with multi-hop graph paths via Reciprocal Rank Fusion.",
+    "auto": "Automatically classifies query complexity and routes to the optimal retrieval approach.",
 }
 st.caption(STRATEGY_EXPLANATIONS[strategy_key])
 
 # ── Conversation History Drawer ──────────────────────────────────────────────
 if st.session_state.get("show_conv_list"):
     conversations = context.user_registry.list_conversations(user_id, kb_id=active_kb_id)
-    if conversations:
-        st.markdown(f"**Conversations in '{active_kb_name}':**")
-        for c_item in conversations:
-            col_t, col_a = st.columns([4, 1], vertical_alignment="center")
-            with col_t:
-                is_active = c_item.conversation_id == st.session_state.get("active_conv_id")
-                title_display = c_item.title if len(c_item.title) <= 50 else c_item.title[:48] + "…"
-                if st.button(
-                    title_display,
-                    key=f"conv_{c_item.conversation_id}",
-                    use_container_width=True,
-                    type="primary" if is_active else "secondary",
-                ):
-                    st.session_state["active_conv_id"] = c_item.conversation_id
-                    st.session_state["show_conv_list"] = False
-                    st.rerun()
-            with col_a:
-                if st.button("Delete", key=f"del_conv_{c_item.conversation_id}", use_container_width=True):
-                    context.user_registry.delete_conversation(c_item.conversation_id, user_id)
-                    if st.session_state.get("active_conv_id") == c_item.conversation_id:
-                        st.session_state.pop("active_conv_id", None)
-                    st.rerun()
-    else:
-        st.info("No prior conversations. Click 'New Chat' to start.")
-    st.markdown("<hr style='border-color: #293244; margin: 12px 0;'/>", unsafe_allow_html=True)
+    with st.container(border=True):
+        if conversations:
+            st.markdown(f"**Conversations in '{active_kb_name}':**")
+            for c_item in conversations:
+                col_t, col_a = st.columns([4.2, 0.8], vertical_alignment="center")
+                with col_t:
+                    is_active = c_item.conversation_id == st.session_state.get("active_conv_id")
+                    title_display = c_item.title if len(c_item.title) <= 50 else c_item.title[:48] + "…"
+                    if st.button(
+                        title_display,
+                        key=f"conv_{c_item.conversation_id}",
+                        use_container_width=True,
+                        type="primary" if is_active else "secondary",
+                    ):
+                        st.session_state["active_conv_id"] = c_item.conversation_id
+                        st.session_state["show_conv_list"] = False
+                        st.rerun()
+                with col_a:
+                    if st.button("Delete", key=f"del_conv_{c_item.conversation_id}", use_container_width=True):
+                        context.user_registry.delete_conversation(c_item.conversation_id, user_id)
+                        if st.session_state.get("active_conv_id") == c_item.conversation_id:
+                            st.session_state.pop("active_conv_id", None)
+                        st.rerun()
+        else:
+            st.info("No prior conversations. Click 'New Chat' to start.")
 
 # ── Active Conversation Resolution ───────────────────────────────────────────
 active_conv_id = st.session_state.get("active_conv_id")
 kb_doc_ids = context.user_registry.get_kb_document_ids(active_kb_id, user_id)
 
 if not active_conv_id:
-    # Check if there is an existing conversation in this KB
     existing_convs = context.user_registry.list_conversations(user_id, kb_id=active_kb_id)
     if existing_convs:
         active_conv_id = existing_convs[0].conversation_id
         st.session_state["active_conv_id"] = active_conv_id
     elif kb_doc_ids:
-        # Automatically initialize a new conversation for convenience
         conv = context.user_registry.create_conversation(
             user_id=user_id,
             kb_id=active_kb_id,
@@ -169,16 +169,15 @@ if not active_conv_id:
         active_conv_id = conv.conversation_id
         st.session_state["active_conv_id"] = active_conv_id
     else:
-        st.markdown(
+        render_html(
             f"""
-            <div class="rag-card" style="text-align: center; padding: 40px 20px; margin-top: 16px;">
-              <h4 style="font-size: 17px; font-weight: 700; color: #F5F7FA; margin: 0 0 8px 0;">No Documents in Knowledge Base</h4>
-              <p style="font-size: 13.5px; color: #A0AABC; max-width: 440px; margin: 0 auto 20px;">
-                Upload documents to '{active_kb_name}' to start asking questions.
+            <div class="rag-card" style="text-align:center;padding:48px 20px;margin-top:16px;">
+              <h4 style="font-size:18px;font-weight:800;color:var(--text);margin:0 0 8px 0;">No Documents in Knowledge Base</h4>
+              <p style="font-size:13.5px;color:var(--text-muted);max-width:460px;margin:0 auto 20px;">
+                Upload documents to '{active_kb_name}' to start asking questions grounded in your research corpus.
               </p>
             </div>
-            """,
-            unsafe_allow_html=True,
+            """
         )
         c_up1, c_up2, c_up3 = st.columns([1, 1.2, 1])
         with c_up2:
@@ -194,10 +193,9 @@ if not conv:
 # ── Conversation Header & Actions ────────────────────────────────────────────
 conv_hdr_col, ren_col, del_col = st.columns([5, 1, 1], vertical_alignment="center")
 with conv_hdr_col:
-    st.markdown(
-        f'<div style="font-size: 13.5px; font-weight: 600; color: #A0AABC;">'
-        f'Conversation: <span style="color: #F5F7FA;">{conv.title}</span> &nbsp;·&nbsp; {active_kb_name}</div>',
-        unsafe_allow_html=True,
+    render_html(
+        f'<div style="font-size:13.5px;font-weight:600;color:var(--text-muted);">'
+        f'Conversation: <strong style="color:var(--text);">{conv.title}</strong> &nbsp;·&nbsp; {active_kb_name}</div>'
     )
 with ren_col:
     if st.button("Rename", key="btn_ren_conv", use_container_width=True):
@@ -235,66 +233,103 @@ if st.session_state.get("del_conv_confirm"):
             st.session_state.pop("del_conv_confirm", None)
             st.rerun()
 
-st.markdown("<hr style='border-color: #293244; margin: 12px 0;'/>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:var(--border);margin:14px 0;'/>", unsafe_allow_html=True)
 
 # ── Message History ──────────────────────────────────────────────────────────
 messages = context.user_registry.list_messages(active_conv_id, user_id)
 
-chat_container = st.container()
-with chat_container:
+if not messages:
+    # Modern empty-state assistant greeting with suggested prompt chips
+    render_html(
+        f"""
+        <div class="rag-card" style="text-align:center;padding:40px 20px;margin-bottom:20px;">
+          <div style="display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;border-radius:12px;background:var(--accent-light);border:1px solid var(--accent-border);margin-bottom:12px;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+            </svg>
+          </div>
+          <h3 style="font-size:18px;font-weight:800;color:var(--text);margin:0 0 6px 0;">Research Assistant Ready</h3>
+          <p style="font-size:13.5px;color:var(--text-muted);max-width:480px;margin:0 auto;line-height:1.55;">
+            Ask questions about the documents in <strong style="color:var(--accent);">{active_kb_name}</strong>.
+            Answers will be synthesized with grounded citations and multi-hop graph evidence.
+          </p>
+        </div>
+        """
+    )
+else:
     for msg in messages:
         if msg["role"] == "user":
-            st.markdown(
-                f'<div style="display:flex;justify-content:flex-end;margin:8px 0;">'
-                f'<div class="chat-user">{msg["content"]}</div></div>',
-                unsafe_allow_html=True,
+            render_html(
+                f'<div style="display:flex;justify-content:flex-end;margin:10px 0;">'
+                f'<div class="chat-user">{msg["content"]}</div></div>'
             )
         else:
             strategy = msg.get("retrieval_strategy", "")
             badge_html = render_strategy_badge(strategy) if strategy else ""
             latency_str = ""
-            if msg.get("total_latency_ms"):
-                latency_str = f" · Response Time: {msg['total_latency_ms']:.0f}ms"
+            tot_lat = msg.get("total_latency_ms")
+            if tot_lat is not None and isinstance(tot_lat, (int, float)) and tot_lat > 0:
+                latency_str = f" · Latency: <strong>{tot_lat:.0f}ms</strong>"
             mock_notice = (
-                " · <em style='color:#F5B942;font-size:11px;'>Dev Mode</em>"
+                " · <span class='badge badge-warning' style='font-size:10px;'>Dev Mode</span>"
                 if msg.get("mock_mode") else ""
             )
 
-            st.markdown(
-                f'<div style="display:flex;justify-content:flex-start;margin:8px 0;">'
-                f'<div style="max-width:85%;">'
-                f'<div style="font-size:12px;color:#A0AABC;margin-bottom:4px;">Assistant &nbsp;{badge_html}{mock_notice}{latency_str}</div>'
-                f'<div class="chat-assistant">{msg["content"]}</div>',
-                unsafe_allow_html=True,
-            )
-
-            # Citations
             citations = msg.get("citations", [])
+            citations_html = ""
             if citations:
                 pills = " ".join(
-                    f'<span style="display:inline-block;background:#1B2230;border:1px solid #293244;border-radius:4px;padding:2px 8px;font-size:11.5px;color:#A0AABC;margin:2px;">'
-                    f'Source: {c.get("document_name","?")} [Chunk #{c.get("chunk_index","?")}]</span>'
+                    f'<span class="badge" style="background:var(--card-hi);border:1px solid var(--border);color:var(--text-muted);font-size:11px;margin:2px;">'
+                    f'📄 {c.get("document_name","?")} [Chunk #{c.get("chunk_index","?")}]</span>'
                     for c in citations[:6]
                 )
-                st.markdown(f'<div style="margin:6px 0;">{pills}</div>', unsafe_allow_html=True)
+                citations_html = f'<div style="margin:8px 0 4px 0;">{pills}</div>'
 
-            st.markdown("</div></div>", unsafe_allow_html=True)
+            render_html(
+                f'<div style="display:flex;justify-content:flex-start;margin:10px 0;">'
+                f'<div style="max-width:85%;width:100%;">'
+                f'<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;display:flex;align-items:center;gap:6px;">'
+                f'<strong>AI Assistant</strong> {badge_html}{mock_notice}{latency_str}'
+                f'</div>'
+                f'<div class="chat-assistant">{msg["content"]}</div>'
+                f'{citations_html}'
+                f'</div></div>'
+            )
 
-            # Expandable evidence details
-            if citations or msg.get("graph_evidence"):
+            # Technical error details if any
+            errors = msg.get("errors") or []
+            if errors:
+                with st.expander("Technical Error Details", expanded=False):
+                    for err in errors:
+                        st.caption(f"• {err}")
+
+            # Expandable evidence details and performance metrics
+            has_evidence = bool(citations or msg.get("graph_evidence"))
+            ret_lat = msg.get("retrieval_latency_ms")
+            gen_lat = msg.get("generation_latency_ms")
+            has_metrics = (ret_lat is not None) or (gen_lat is not None) or (tot_lat is not None)
+
+            if has_evidence or has_metrics:
                 total_ev = len(citations)
                 graph_ev = msg.get("graph_evidence")
                 graph_rels = (graph_ev or {}).get("relationships", [])
 
-                with st.expander(
-                    f"Sources & Evidence ({total_ev} citations"
+                exp_title = (
+                    f"Sources & Telemetry ({total_ev} citations"
                     + (f", {len(graph_rels)} graph paths" if graph_rels else "")
                     + ")"
-                ):
+                ) if has_evidence else "Performance Telemetry"
+
+                with st.expander(exp_title):
                     if citations:
                         st.markdown("**Document Sources & Relevance Scores:**")
                         for c in citations:
-                            score_str = f" · Similarity Score: {c['score']:.3f}" if c.get("score") is not None else ""
+                            score_val = c.get("score")
+                            score_str = (
+                                f" · Score: {format_metric(score_val, fallback='', precision=3)}"
+                                if score_val is not None
+                                else ""
+                            )
                             st.caption(
                                 f"• {c.get('document_name','?')} "
                                 f"[Chunk #{c.get('chunk_index','?')}, Page {c.get('page_number') or 1}]{score_str}"
@@ -307,19 +342,27 @@ with chat_container:
                                 f"→ {r.get('relationship_type','?')} "
                                 f"→ {r.get('target_entity_name','?')}"
                             )
-                    if msg.get("retrieval_latency_ms") or msg.get("generation_latency_ms"):
+                    if has_metrics:
                         st.markdown("**Performance Breakdown:**")
                         p_col1, p_col2, p_col3 = st.columns(3)
                         with p_col1:
-                            st.metric("Retrieval Latency", f"{msg.get('retrieval_latency_ms',0):.0f} ms")
+                            st.metric(
+                                "Retrieval Latency",
+                                format_latency(ret_lat, fallback="Unavailable"),
+                            )
                         with p_col2:
-                            st.metric("Generation Latency", f"{msg.get('generation_latency_ms',0):.0f} ms")
+                            st.metric(
+                                "Generation Latency",
+                                format_latency(gen_lat, fallback="Unavailable", treat_zero_as_unavailable=True),
+                            )
                         with p_col3:
-                            st.metric("Total Response Time", f"{msg.get('total_latency_ms',0):.0f} ms")
+                            st.metric(
+                                "Total Response Time",
+                                format_latency(tot_lat, fallback="Unavailable", treat_zero_as_unavailable=True),
+                            )
 
 # ── Suggested Questions Chips ────────────────────────────────────────────────
-st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
+st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
 SUGGESTIONS = [
     "What are the main topics discussed?",
     "Summarize the key findings.",
@@ -332,7 +375,7 @@ for i, sug in enumerate(SUGGESTIONS):
         if st.button(sug, key=f"sug_{i}", use_container_width=True):
             st.session_state["chat_prefill"] = sug
 
-# ── Message Input ────────────────────────────────────────────────────────────
+# ── Message Input Area ────────────────────────────────────────────────────────
 question = st.chat_input("Ask a question about your documents...")
 
 if "chat_prefill" in st.session_state:
@@ -366,17 +409,17 @@ if question:
     elif strategy_key == "hybrid":
         manual_strategy = RetrievalStrategy.HYBRID
 
-    with st.spinner("Retrieving evidence and generating answer..."):
+    with st.spinner("Retrieving evidence and synthesizing grounded response..."):
         result = context.query_service.answer(
             question=question,
             manual_strategy=manual_strategy,
-            document_ids=kb_doc_ids if kb_doc_ids else None,
+            document_ids=kb_doc_ids,
             top_k=context.settings.default_top_k,
         )
 
     # Groundedness notice if no evidence found
     answer_text = result.answer
-    if not result.citations and not (result.graph_evidence and result.graph_evidence.entities):
+    if not result.errors and not result.citations and not (result.graph_evidence and result.graph_evidence.entities):
         answer_text = "The uploaded documents do not contain sufficient evidence to answer this question."
 
     citations_storage = [

@@ -1,0 +1,67 @@
+
+digraph BackendFlow {
+    rankdir=LR;
+    node [shape=box, style="rounded,filled", fillcolor="#f8fafc", fontname="Helvetica", fontsize=9, color="#334155"];
+    edge [fontname="Helvetica", fontsize=8, color="#475569"];
+
+    subgraph cluster_ingest {
+        label = "Ingestion Pipeline";
+        style=filled;
+        color="#f1f5f9";
+        fillcolor="#f8fafc";
+        
+        Doc [label="Input Document
+(PDF, TXT, DOCX)", fillcolor="#e2e8f0"];
+        Chunker [label="Recursive Token
+Chunker (256/64)"];
+        Embedder [label="SentenceTransformers
+(all-MiniLM-L6-v2)", fillcolor="#fed7aa"];
+        Extractor [label="Entity & Relation
+Extractor (Typed Predicates)", fillcolor="#e9d5ff"];
+        Qdrant [label="Qdrant Vector DB
+(Cosine Collection)", shape=cylinder, fillcolor="#fdba74"];
+        Neo4j [label="Neo4j Graph DB
+(Cypher Knowledge Graph)", shape=cylinder, fillcolor="#d8b4fe"];
+
+        Doc -> Chunker;
+        Chunker -> Embedder -> Qdrant;
+        Chunker -> Extractor -> Neo4j;
+    }
+
+    subgraph cluster_query {
+        label = "Query & Retrieval Pipeline";
+        style=filled;
+        color="#f1f5f9";
+        fillcolor="#f8fafc";
+
+        Query [label="User Query", shape=ellipse, fillcolor="#dcfce7", color="#15803d"];
+        Router [label="Query Router
+(Entity Density & Keywords)", shape=diamond, fillcolor="#fef08a"];
+        VecRet [label="Vector Retriever
+(Cosine Top-K + Rerank)"];
+        GraphRet [label="Graph Retriever
+(Multi-Hop BFS + Chunk Map)"];
+        RRF [label="Reciprocal Rank Fusion
+(RRF Score: k=60)", fillcolor="#bfdbfe"];
+        Context [label="Context Assembler
+(Passages + Graph Triples)"];
+        LLMGen [label="Ollama LLM Engine
+(Llama 3.1 8B / Grounded Synthesizer)", fillcolor="#fbcfe8"];
+        Answer [label="Synthesized Answer
++ Grounded Citations
++ Telemetry Metrics", fillcolor="#bbf7d0"];
+
+        Query -> Router;
+        Router -> VecRet [label="Factual"];
+        Router -> GraphRet [label="Relational"];
+        Router -> RRF [label="Complex"];
+        VecRet -> RRF;
+        GraphRet -> RRF;
+        Qdrant -> VecRet [style=dashed];
+        Neo4j -> GraphRet [style=dashed];
+        RRF -> Context;
+        VecRet -> Context [style=dotted];
+        GraphRet -> Context [style=dotted];
+        Context -> LLMGen -> Answer;
+    }
+}

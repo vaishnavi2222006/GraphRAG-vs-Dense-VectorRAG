@@ -51,9 +51,24 @@ def require_auth() -> str:
     user_id = get_current_user_id()
     if not user_id:
         st.warning("Please sign in to access this page.")
-        try:
-            st.switch_page("pages/0_Login.py")
-        except Exception:
-            st.page_link("pages/0_Login.py", label="Sign In", icon=":material/login:")
+        # Attempt switch_page first
+        for target in ("pages/0_Login.py", "0_Login.py"):
+            try:
+                st.switch_page(target)
+                st.stop()
+            except Exception:
+                pass
+        # Fallback to page_link
+        for target in ("pages/0_Login.py", "0_Login.py"):
+            try:
+                st.page_link(target, label="Sign In", icon=":material/login:")
+                st.stop()
+            except Exception:
+                pass
+        if st.button("Sign In", type="primary", key="require_auth_signin_btn"):
+            try:
+                st.switch_page("pages/0_Login.py")
+            except Exception:
+                st.switch_page("0_Login.py")
         st.stop()
     return user_id

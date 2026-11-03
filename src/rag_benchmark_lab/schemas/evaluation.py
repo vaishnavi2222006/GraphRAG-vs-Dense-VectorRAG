@@ -36,3 +36,18 @@ class EvaluationRunSummary:
     failed_queries: int
     metrics: dict[str, MetricResult] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RecommendationResult:
+    recommended_strategy: str | None
+    reason: str
+    strengths: list[str] = field(default_factory=list)
+    weaknesses: list[str] = field(default_factory=list)
+    relevant_metrics: dict[str, Any] = field(default_factory=dict)
+    confidence: str = "Medium"
+    is_definitive: bool = False
+    status: str = "definitive"
+    score_breakdown: dict[str, float] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
+

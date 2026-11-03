@@ -6,7 +6,7 @@ from typing import Any
 from rag_benchmark_lab.config.settings import AppSettings, get_settings
 from rag_benchmark_lab.embeddings.embedding_service import EmbeddingService
 from rag_benchmark_lab.evaluation.result_store import ResultStore
-from rag_benchmark_lab.generation.llm_service import OllamaLLMService
+from rag_benchmark_lab.generation.llm_service import LLMService, OllamaLLMService, create_llm_service
 from rag_benchmark_lab.graph_store.entity_extractor import EntityRelationshipExtractor
 from rag_benchmark_lab.graph_store.graph_retriever import GraphRetriever
 from rag_benchmark_lab.graph_store.neo4j_store import Neo4jStore
@@ -17,7 +17,7 @@ from rag_benchmark_lab.services.document_service import DocumentService
 from rag_benchmark_lab.services.health_service import HealthService
 from rag_benchmark_lab.services.query_service import QueryService
 from rag_benchmark_lab.services.user_registry import UserRegistry
-from rag_benchmark_lab.utils.ui import inject_custom_css, render_dev_mode_banner, render_lab_header
+from rag_benchmark_lab.utils.ui import _safe_page_link, inject_custom_css, render_dev_mode_banner, render_lab_header
 from rag_benchmark_lab.vector_store.qdrant_store import QdrantStore
 
 
@@ -29,7 +29,7 @@ class AppContext:
     embedding_service: EmbeddingService
     qdrant_store: QdrantStore
     neo4j_store: Neo4jStore
-    llm_service: OllamaLLMService
+    llm_service: LLMService | OllamaLLMService | Any
     extractor: EntityRelationshipExtractor
     document_service: DocumentService
     vector_retriever: VectorRetriever
@@ -38,6 +38,45 @@ class AppContext:
     query_service: QueryService
     result_store: ResultStore
     health_service: HealthService
+
+
+def _restore_qdrant_from_registry(registry, embedding_service, qdrant_store) -> None:
+    """Re-hydrate an in-memory Qdrant store from the SQLite chunk registry.
+
+    Called on startup when Docker Qdrant is unavailable so that previously
+    ingested documents are still searchable after a Streamlit restart.
+    """
+    try:
+        from rag_benchmark_lab.schemas.documents import ChunkRecord
+        chunks_raw = registry.list_chunks()
+        if not chunks_raw:
+            return
+        chunks: list[ChunkRecord] = []
+        for row in chunks_raw:
+            chunks.append(ChunkRecord(
+                document_id=row["document_id"],
+                document_name=row.get("document_name", ""),
+                chunk_id=row["chunk_id"],
+                chunk_index=row.get("chunk_index", 0),
+                text=row.get("text", ""),
+                content_hash=row.get("content_hash", ""),
+                page_number=row.get("page_number"),
+                source_path=row.get("source_path"),
+                metadata=row.get("metadata") or {},
+            ))
+        # Embed in batches of 32 to avoid memory spikes
+        batch_size = 32
+        for start in range(0, len(chunks), batch_size):
+            batch = chunks[start : start + batch_size]
+            texts = [c.text for c in batch]
+            if not any(texts):
+                continue
+            embedding_result = embedding_service.embed_texts(texts)
+            qdrant_store.ensure_collection(embedding_result.dimension)
+            qdrant_store.upsert_chunks(batch, embedding_result.vectors)
+    except Exception:
+        # Non-fatal: app still runs; only vector retrieval for old docs is empty
+        pass
 
 
 def build_context() -> AppContext:
@@ -49,6 +88,7 @@ def build_context() -> AppContext:
     embedding_service = EmbeddingService(settings.embedding_model, mock_mode=settings.llm_mock_mode)
 
     # 1. Qdrant client adapter: try configured URL, fallback to local in-memory
+    _qdrant_persistent = True
     qdrant_store = QdrantStore(settings.qdrant_url, settings.qdrant_api_key, settings.qdrant_collection)
     try:
         qdrant_store.health()
@@ -58,6 +98,7 @@ def build_context() -> AppContext:
         from rag_benchmark_lab.vector_store.qdrant_store import QdrantStore as MemQdrant
         qdrant_store = MemQdrant(":memory:", None, settings.qdrant_collection)
         qdrant_store.ensure_collection(embedding_service.dimension)
+        _qdrant_persistent = False
 
     # 2. Neo4j graph store adapter: try Bolt connection, fallback to NetworkX graph store
     neo4j_store = Neo4jStore(settings.neo4j_uri, settings.neo4j_username, settings.neo4j_password)
@@ -70,12 +111,20 @@ def build_context() -> AppContext:
         neo4j_store = NetworkXStore()
         neo4j_store.restore_from_registry(registry)
 
+    # Re-hydrate in-memory Qdrant from the SQLite chunk registry so data
+    # survives across Streamlit restarts (mirrors NetworkX restore_from_registry).
+    if not _qdrant_persistent:
+        _restore_qdrant_from_registry(registry, embedding_service, qdrant_store)
+
     # 3. LLM Service
-    llm_service = OllamaLLMService(
-        settings.ollama_base_url,
-        settings.ollama_model,
-        settings.ollama_timeout_seconds,
-        settings.ollama_retries,
+    llm_service = create_llm_service(
+        provider=settings.llm_provider,
+        gemini_api_key=settings.gemini_api_key,
+        gemini_model=settings.gemini_model,
+        ollama_base_url=settings.ollama_base_url,
+        ollama_model=settings.ollama_model,
+        timeout_seconds=settings.gemini_timeout_seconds if settings.llm_provider == "gemini" else settings.ollama_timeout_seconds,
+        retries=settings.ollama_retries,
         mock_mode=settings.llm_mock_mode,
     )
 
@@ -91,7 +140,7 @@ def build_context() -> AppContext:
         upload_size_limit_mb=settings.upload_size_limit_mb,
     )
     vector_retriever = VectorRetriever(embedding_service, qdrant_store, settings.default_top_k)
-    graph_retriever = GraphRetriever(neo4j_store, max_hops=settings.graph_max_hops, max_results=settings.graph_max_results)
+    graph_retriever = GraphRetriever(neo4j_store, max_hops=settings.graph_max_hops, max_results=settings.graph_max_results, registry=registry)
     hybrid_retriever = HybridRetriever(vector_retriever, graph_retriever, fusion_k=settings.rrf_k)
     query_service = QueryService(
         vector_retriever, graph_retriever, hybrid_retriever, llm_service, settings.default_top_k, settings.answer_temperature
@@ -134,26 +183,24 @@ def render_overview_page(context: AppContext) -> None:
         badge_text="RESEARCH PLATFORM",
     )
 
-    render_dev_mode_banner(context.settings.llm_mock_mode)
-
     # Core Strategy Pillars
     st.markdown(
         """
         <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 28px;">
             <div class="pillar-card" style="border-top: 4px solid #0284c7;">
-                <h4 style="color: #0369a1;">⚡ Dense Vector RAG</h4>
+                <h4 style="color: #0369a1;">Dense Vector RAG</h4>
                 <p>
                     Retrieves passages using <strong>dense vector semantic similarity</strong> in high-dimensional embedding space. Ideal for direct factual queries and unstructured domain documents.
                 </p>
             </div>
             <div class="pillar-card" style="border-top: 4px solid #059669;">
-                <h4 style="color: #047857;">🕸️ GraphRAG</h4>
+                <h4 style="color: #047857;">GraphRAG</h4>
                 <p>
                     Executes <strong>multi-hop entity and relationship traversal</strong> over structured Neo4j graph schemas. Solves complex relational queries and cross-document reasoning.
                 </p>
             </div>
             <div class="pillar-card" style="border-top: 4px solid #7c3aed;">
-                <h4 style="color: #6d28d9;">🔀 Hybrid RAG (RRF)</h4>
+                <h4 style="color: #6d28d9;">Hybrid RAG (RRF)</h4>
                 <p>
                     Fuses dense vector semantic candidates with connected knowledge graph paths using <strong>Reciprocal Rank Fusion (RRF)</strong> to optimize overall recall and precision.
                 </p>
@@ -164,7 +211,7 @@ def render_overview_page(context: AppContext) -> None:
     )
 
     # Real Live Database Counts
-    st.markdown("### 📊 Live System Metrics")
+    st.markdown("### Live System Metrics")
     real_counts = context.health_service.get_real_counts()
     docs = context.registry.list_documents()
     failed_ingestions = len([d for d in docs if d.get("status") in ("failed", "partial")])
@@ -189,50 +236,27 @@ def render_overview_page(context: AppContext) -> None:
     col_actions, col_health = st.columns([3, 2])
 
     with col_actions:
-        st.markdown("### 🚀 Guided Research Actions")
+        st.markdown("### Guided Research Actions")
         st.markdown("Select an investigation phase to proceed with your empirical evaluation:")
-
-        import os
-        from pathlib import Path
-        prefix = "pages/" if Path("pages").exists() else "src/rag_benchmark_lab/pages/"
 
         btn_cols = st.columns(2)
         with btn_cols[0]:
-            try:
-                st.page_link(f"{prefix}2_Corpus_Management.py", label="📁 Manage Document Corpus", icon="📄")
-            except Exception:
-                st.markdown("[📁 Manage Document Corpus](2_Corpus_Management)")
-            try:
-                st.page_link(f"{prefix}3_Chat.py", label="💬 Interactive Chatbot", icon="🤖")
-            except Exception:
-                st.markdown("[💬 Interactive Chatbot](3_Chat)")
-            try:
-                st.page_link(f"{prefix}4_Comparison.py", label="⚖️ Side-by-Side Comparison", icon="📊")
-            except Exception:
-                st.markdown("[⚖️ Side-by-Side Comparison](4_Comparison)")
+            _safe_page_link("pages/2_Documents.py", label="Manage Document Corpus", icon=":material/description:")
+            _safe_page_link("pages/3_Chat.py", label="Interactive Chatbot", icon=":material/chat:")
+            _safe_page_link("pages/4_Compare.py", label="Side-by-Side Comparison", icon=":material/compare_arrows:")
         with btn_cols[1]:
-            try:
-                st.page_link(f"{prefix}5_Graph_Explorer.py", label="🕸️ Explore Knowledge Graph", icon="🌐")
-            except Exception:
-                st.markdown("[🕸️ Explore Knowledge Graph](5_Graph_Explorer)")
-            try:
-                st.page_link(f"{prefix}6_Evaluation_Lab.py", label="🧪 Run Benchmark Experiments", icon="🔬")
-            except Exception:
-                st.markdown("[🧪 Run Benchmark Experiments](6_Evaluation_Lab)")
-            try:
-                st.page_link(f"{prefix}7_Analytics.py", label="📈 View Results & Analytics", icon="📉")
-            except Exception:
-                st.markdown("[📈 View Results & Analytics](7_Analytics)")
+            _safe_page_link("pages/5_Evaluation.py", label="Run Benchmark Experiments", icon=":material/assessment:")
+            _safe_page_link("pages/1_Home.py", label="Home Workspace", icon=":material/home:")
 
     with col_health:
-        st.markdown("### 🔌 Service Health & Diagnostics")
+        st.markdown("### Service Health & Diagnostics")
         health_items = context.health_service.check()
         for item in health_items:
             if item.healthy:
                 st.markdown(
                     f"""
                     <div class="status-pill-healthy">
-                        <span>✅</span>
+                        <span class="badge badge-success">OK</span>
                         <div>
                             <strong>{item.name}</strong><br/>
                             <span style="font-size: 11.5px; opacity: 0.85;">{item.details or 'Healthy'}</span>
@@ -245,7 +269,7 @@ def render_overview_page(context: AppContext) -> None:
                 st.markdown(
                     f"""
                     <div class="status-pill-dev">
-                        <span>⚡</span>
+                        <span class="badge badge-warning">DEV</span>
                         <div>
                             <strong>{item.name}</strong><br/>
                             <span style="font-size: 11.5px; opacity: 0.85;">{item.details or 'Offline dev mode'}</span>
@@ -258,7 +282,7 @@ def render_overview_page(context: AppContext) -> None:
                 st.markdown(
                     f"""
                     <div class="status-pill-offline">
-                        <span>❌</span>
+                        <span class="badge badge-error">DOWN</span>
                         <div>
                             <strong>{item.name}</strong><br/>
                             <span style="font-size: 11.5px; opacity: 0.85;">{item.details or 'Unavailable'}</span>
@@ -271,7 +295,7 @@ def render_overview_page(context: AppContext) -> None:
     st.markdown("---")
 
     # Research Architecture Flowchart Section
-    st.markdown("### 🏛️ System Research Architecture")
+    st.markdown("### System Research Architecture")
     st.markdown(
         """
         The architecture enforces parallel dual-indexing and 3-way comparative retrieval:
@@ -312,7 +336,7 @@ flowchart TD
     )
 
     # Current Ingested Corpus Section
-    st.markdown("### 📚 Ingested Corpus Documents")
+    st.markdown("### Ingested Corpus Documents")
     if docs:
         df_docs = pd.DataFrame(
             [
@@ -335,7 +359,7 @@ flowchart TD
 def main() -> None:
     import streamlit as st
 
-    st.set_page_config(page_title="Research Overview - RAG Benchmark Lab", page_icon="🧪", layout="wide")
+    st.set_page_config(page_title="RAG Benchmark Lab", layout="wide")
     context = get_context()
     render_overview_page(context)
 

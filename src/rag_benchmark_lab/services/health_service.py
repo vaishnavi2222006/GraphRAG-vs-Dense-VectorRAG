@@ -19,7 +19,7 @@ class HealthService:
         self.llm_service = llm_service
         self.registry = registry
 
-    def check(self) -> list[ServiceHealth]:
+    def check(self, check_remote_llm: bool = False) -> list[ServiceHealth]:
         results: list[ServiceHealth] = []
 
         # 1. Qdrant
@@ -52,26 +52,46 @@ class HealthService:
         except Exception as exc:
             results.append(ServiceHealth(name="Neo4j Knowledge Graph", healthy=False, details=f"Neo4j: Unavailable ({exc.__class__.__name__}: {exc})"))
 
-        # 3. Ollama / LLM Service
+        # 3. LLM Service (Gemini or Ollama)
+        is_gemini = "gemini" in self.llm_service.__class__.__name__.lower()
+        provider_name = "Google Gemini" if is_gemini else "Ollama LLM"
         try:
             if getattr(self.llm_service, "mock_mode", False):
                 results.append(
                     ServiceHealth(
-                        name="Ollama LLM (Mock / Dev Mode)",
+                        name=f"{provider_name} (Mock / Dev Mode)",
                         healthy=False,
-                        details="LLM unavailable: running in mock/dev mode. Check the configured Ollama service and model.",
+                        details="LLM unavailable: running in mock/dev mode. Check the configured service and model.",
+                    )
+                )
+            elif is_gemini and (hasattr(self.llm_service, "is_configured") and not self.llm_service.is_configured()):
+                results.append(
+                    ServiceHealth(
+                        name="Google Gemini LLM Service",
+                        healthy=False,
+                        details="Gemini API key is not configured. Please update GEMINI_API_KEY in your .env file and restart the application.",
                     )
                 )
             else:
-                self.llm_service.health()
+                # For Gemini, default to safe local validation (check_remote=False) to avoid consuming API quota during page renders
+                if is_gemini and hasattr(self.llm_service, "health"):
+                    import inspect
+                    sig = inspect.signature(self.llm_service.health)
+                    is_healthy = self.llm_service.health(check_remote=check_remote_llm) if "check_remote" in sig.parameters else self.llm_service.health()
+                else:
+                    is_healthy = self.llm_service.health()
+
                 model_name = getattr(self.llm_service, "model_name", "configured model")
-                results.append(ServiceHealth(name="Ollama LLM Service", healthy=True, details=f"Connected. Model: {model_name}"))
+                if is_healthy:
+                    results.append(ServiceHealth(name=f"{provider_name} Service", healthy=True, details=f"Configured. Model: {model_name}"))
+                else:
+                    results.append(ServiceHealth(name=f"{provider_name} Service", healthy=False, details=f"Service unreachable or model '{model_name}' not accessible."))
         except Exception as exc:
             results.append(
                 ServiceHealth(
-                    name="Ollama LLM Service",
+                    name=f"{provider_name} Service",
                     healthy=False,
-                    details=f"LLM unavailable: check the configured Ollama service and model ({exc.__class__.__name__})",
+                    details=f"LLM unavailable: ({exc.__class__.__name__}: {exc})",
                 )
             )
 

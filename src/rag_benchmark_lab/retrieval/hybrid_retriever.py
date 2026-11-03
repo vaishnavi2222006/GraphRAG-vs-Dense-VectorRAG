@@ -34,6 +34,18 @@ class HybridRetriever:
     def retrieve(self, question: str, document_ids: list[str] | None = None) -> HybridRetrievalResult:
         start = perf_counter()
         warnings: list[str] = []
+
+        if document_ids is not None and len(document_ids) == 0:
+            evidence = GraphEvidence(entities=[], relationships=[], source_chunks=[])
+            return HybridRetrievalResult(
+                chunks=[],
+                vector_chunks=[],
+                graph_evidence=evidence,
+                fusion_scores={},
+                retrieval_latency_ms=(perf_counter() - start) * 1000.0,
+                warnings=["empty_corpus_scope"],
+            )
+
         vector_result = self.vector_retriever.retrieve(question, document_ids=document_ids)
         graph_result = self.graph_retriever.retrieve(question, document_ids=document_ids)
 
@@ -41,20 +53,36 @@ class HybridRetriever:
         graph_ranked_ids = [chunk.chunk_id for chunk in graph_result.source_chunks]
         fusion_scores = reciprocal_rank_fusion([vector_ranked_ids, graph_ranked_ids], k=self.fusion_k)
 
-        combined = {chunk.chunk_id: chunk for chunk in vector_result.chunks}
-        for chunk in graph_result.source_chunks:
-            combined.setdefault(chunk.chunk_id, chunk)
+        combined: dict[str, RetrievedChunk] = {}
+        for chunk in vector_result.chunks:
+            chunk.metadata["retrieval_source"] = "vector"
+            combined[chunk.chunk_id] = chunk
 
-        ranked_chunks = sorted(
-            combined.values(),
-            key=lambda chunk: (fusion_scores.get(chunk.chunk_id, 0.0), chunk.score),
-            reverse=True,
-        )
+        for chunk in graph_result.source_chunks:
+            if chunk.chunk_id in combined:
+                existing = combined[chunk.chunk_id]
+                existing.score = max(existing.score, chunk.score)
+                existing.metadata["retrieval_source"] = "hybrid_both"
+            else:
+                chunk.metadata["retrieval_source"] = "graph"
+                combined[chunk.chunk_id] = chunk
+
+        def _sort_key(chunk: RetrievedChunk):
+            fs = fusion_scores.get(chunk.chunk_id, 0.0)
+            # Prevent irrelevant graph-only chunks from displacing relevant vector matches
+            if chunk.metadata.get("retrieval_source") == "graph" and chunk.score < 0.15:
+                fs = fs * 0.5
+            return (fs, chunk.score)
+
+        ranked_chunks = sorted(combined.values(), key=_sort_key, reverse=True)
         for chunk in ranked_chunks:
             chunk.metadata["rrf_score"] = fusion_scores.get(chunk.chunk_id, 0.0)
 
+        if not vector_result.chunks:
+            warnings.append("vector_retrieval_returned_no_chunks")
         if not graph_result.source_chunks:
             warnings.append("graph_retrieval_returned_no_source_chunks")
+        warnings.extend(graph_result.warnings)
 
         return HybridRetrievalResult(
             chunks=ranked_chunks,

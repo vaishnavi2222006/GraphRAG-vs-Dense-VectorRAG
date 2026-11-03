@@ -123,15 +123,35 @@ with cfg_col2:
     query_limit = st.slider("Max Queries to Run", min_value=1, max_value=max(1, len(examples)), value=min(5, len(examples)))
 
 with cfg_col3:
-    st.markdown("**Active Environment:**")
-    st.caption(f"• LLM Engine: **{'Mock / Dev' if context.settings.llm_mock_mode else 'Ollama Real'}**")
+    if context.settings.llm_provider == "gemini":
+        llm_engine_label = f"Google Gemini ({context.settings.gemini_model})"
+    elif context.settings.llm_mock_mode:
+        llm_engine_label = "Mock / Dev Synthesis"
+    else:
+        llm_engine_label = f"Ollama ({context.settings.ollama_model})"
+    st.caption(f"• LLM Engine: **{llm_engine_label}**")
     st.caption("• Vector DB: **Qdrant (Live)**")
     st.caption("• Graph DB: **Neo4j (Live)**")
 
+# Fetch document IDs for active corpus
+kb_doc_ids = context.user_registry.get_kb_document_ids(active_kb_id, user_id) if active_kb_id else []
+is_corpus_empty = not kb_doc_ids
+
+if is_corpus_empty:
+    st.warning("⚠️ The selected Knowledge Base has no documents. Empty corpora cannot be evaluated.")
+
 # Step 3: Run Benchmark
-start_btn = st.button("🧪 Launch Empirical Benchmark Run", type="primary", disabled=not examples or not selected_strategies)
+start_btn = st.button(
+    "🧪 Launch Empirical Benchmark Run",
+    type="primary",
+    disabled=not examples or not selected_strategies or is_corpus_empty,
+)
 
 if start_btn:
+    if is_corpus_empty:
+        st.error("Cannot evaluate an empty knowledge base. Please upload documents first.")
+        st.stop()
+
     active_examples = examples[:query_limit]
     active_strat_enums = [RetrievalStrategy[s] for s in selected_strategies]
 
@@ -142,7 +162,11 @@ if start_btn:
     runner = BenchmarkRunner(context.query_service, context.result_store)
 
     with st.spinner("Executing benchmark across strategies..."):
-        run_output = runner.run(active_examples, strategies=active_strat_enums)
+        run_output = runner.run(
+            active_examples,
+            strategies=active_strat_enums,
+            document_ids=kb_doc_ids,
+        )
 
     progress_bar.progress(1.0)
     status_text.success(f"✅ Benchmark Run `{run_output['run_id'][:12]}...` completed and persisted!")

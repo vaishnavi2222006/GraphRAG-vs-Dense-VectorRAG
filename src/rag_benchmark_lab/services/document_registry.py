@@ -270,6 +270,11 @@ class DocumentRegistry:
             row = connection.execute("SELECT * FROM documents WHERE document_id = ?", (document_id,)).fetchone()
             return dict(row) if row else None
 
+    def get_chunk(self, chunk_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT * FROM chunks WHERE chunk_id = ?", (chunk_id,)).fetchone()
+            return dict(row) if row else None
+
     def list_documents(self) -> list[dict[str, Any]]:
         with self._connect() as connection:
             rows = connection.execute("SELECT * FROM documents ORDER BY updated_at DESC").fetchall()

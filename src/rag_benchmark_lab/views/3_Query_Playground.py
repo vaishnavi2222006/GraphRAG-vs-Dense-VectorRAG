@@ -8,6 +8,8 @@ from rag_benchmark_lab.app import get_context
 from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
+    format_latency,
+    format_metric,
     inject_custom_css,
     render_dev_mode_banner,
     render_lab_header,
@@ -189,19 +191,19 @@ if run_clicked and question_input.strip():
     with lat_cols[0]:
         st.metric(
             "Retrieval Latency",
-            f"{result.retrieval_latency_ms:.2f} ms" if result.retrieval_latency_ms is not None else "N/A",
+            format_latency(result.retrieval_latency_ms, fallback="N/A", precision=2),
             help="Time taken to search Qdrant / traverse Neo4j.",
         )
     with lat_cols[1]:
         st.metric(
             "Generation Latency",
-            f"{result.generation_latency_ms:.2f} ms" if result.generation_latency_ms is not None else "N/A",
+            format_latency(result.generation_latency_ms, fallback="N/A", precision=2, treat_zero_as_unavailable=True),
             help="Time taken by LLM to produce answer tokens.",
         )
     with lat_cols[2]:
         st.metric(
             "Total Pipeline Latency",
-            f"{result.total_latency_ms:.2f} ms" if result.total_latency_ms is not None else "N/A",
+            format_latency(result.total_latency_ms, fallback="N/A", precision=2, treat_zero_as_unavailable=True),
         )
     with lat_cols[3]:
         st.metric(
@@ -243,10 +245,12 @@ if run_clicked and question_input.strip():
     with tab_chunks:
         if result.retrieved_sources:
             for i, chunk in enumerate(result.retrieved_sources):
-                rrf_str = f" | RRF Score: {chunk.metadata.get('rrf_score', 0):.4f}" if "rrf_score" in chunk.metadata else ""
+                rrf_val = chunk.metadata.get("rrf_score")
+                rrf_str = f" | RRF Score: {rrf_val:.4f}" if isinstance(rrf_val, (int, float)) else ""
                 with st.expander(f"Chunk #{i+1} — {chunk.document_name} [Chunk {chunk.chunk_id[:8]}]{rrf_str}"):
                     st.markdown(f"**Source Document:** `{chunk.document_name}` (Page {chunk.page_number or 1})")
-                    st.markdown(f"**Relevance Score:** `{chunk.score:.4f}`")
+                    score_disp = f"`{chunk.score:.4f}`" if isinstance(chunk.score, (int, float)) else "`N/A`"
+                    st.markdown(f"**Relevance Score:** {score_disp}")
                     st.text(chunk.text)
         else:
             st.info("No text chunks were retrieved.")

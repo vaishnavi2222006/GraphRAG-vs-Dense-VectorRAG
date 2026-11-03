@@ -1,7 +1,9 @@
 """RAG Benchmark Lab — Documents Management Page."""
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+import re
 
 import pandas as pd
 import streamlit as st
@@ -11,11 +13,30 @@ from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
     inject_custom_css,
     render_dev_mode_banner,
+    render_html,
     render_topnav,
 )
 
+
+def _safe_filename(original_name: str, content_hash: str) -> str:
+    """Return a safe, unique filename for the uploads cache."""
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]", "_", Path(original_name).stem)
+    suffix = Path(original_name).suffix or ""
+    return f"{content_hash[:12]}_{safe_stem}{suffix}"
+
+
+def _cache_upload(file_bytes: bytes, original_name: str, upload_dir: Path) -> str:
+    """Write *file_bytes* into *upload_dir* with a safe unique filename."""
+    content_hash = hashlib.sha256(file_bytes).hexdigest()
+    dest = upload_dir / _safe_filename(original_name, content_hash)
+    if not dest.exists():
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(file_bytes)
+    return str(dest)
+
+
 st.set_page_config(
-    page_title="Your Documents — RAG Benchmark Lab",
+    page_title="Documents — RAG Benchmark Lab",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -27,27 +48,26 @@ user_id = require_auth()
 context = get_context()
 user_name = get_current_user_name() or "User"
 
-render_dev_mode_banner(context.settings.llm_mock_mode)
-
 # ── Page Header ──────────────────────────────────────────────────────────────
-st.markdown(
-    """
-    <div style="margin-bottom: 20px;">
-      <h1 style="font-size: 26px; font-weight: 800; letter-spacing: -0.03em; color: #F5F7FA; margin: 0 0 4px 0;">
-        Your Documents
-      </h1>
-      <p style="font-size: 14px; color: #A0AABC; margin: 0;">
-        Upload and manage the documents used by your RAG system.
-      </p>
-    </div>
-    """,
-    unsafe_allow_html=True,
+render_html(
+    """<div style="margin-top:20px;margin-bottom:20px;">
+<div style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px;">
+  <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--accent);"></span>
+  Corpus Management
+</div>
+<h1 style="font-size:28px;font-weight:800;letter-spacing:-0.03em;color:var(--text);margin:0 0 4px 0;">
+  Document Ingestion &amp; Knowledge Bases
+</h1>
+<p style="font-size:14px;color:var(--text-muted);margin:0;">
+  Upload domain literature, manage isolated knowledge bases, and monitor vector chunking and entity extraction.
+</p>
+</div>"""
 )
 
 # ── Knowledge Base Selector & Creation ───────────────────────────────────────
 kbs = context.user_registry.list_knowledge_bases(user_id)
 
-kb_col, create_col = st.columns([3, 2], vertical_alignment="center")
+kb_col, create_col = st.columns([3.5, 1.5], vertical_alignment="center")
 
 with kb_col:
     if kbs:
@@ -61,9 +81,10 @@ with kb_col:
         selected_kb_id = st.selectbox(
             "Active Knowledge Base",
             options=list(kb_options.keys()),
-            format_func=lambda x: kb_options[x],
+            format_func=lambda x: f"Knowledge Base: {kb_options[x]}",
             index=list(kb_options.keys()).index(active_kb_id),
             key="docs_kb_selector",
+            label_visibility="collapsed",
         )
         if selected_kb_id != active_kb_id:
             st.session_state["active_kb_id"] = selected_kb_id
@@ -74,58 +95,59 @@ with kb_col:
     else:
         active_kb_id = None
         active_kb_name = ""
-        st.info("Create a knowledge base to start uploading and managing documents.")
+        st.info("Create a knowledge base to start uploading and managing research documents.")
 
 with create_col:
-    if st.button("New Knowledge Base", use_container_width=True, key="btn_open_create_kb"):
+    if st.button("New Knowledge Base", icon=":material/add:", use_container_width=True, key="btn_open_create_kb"):
         st.session_state["show_create_kb"] = True
 
 # ── Create Knowledge Base Form ───────────────────────────────────────────────
 if st.session_state.get("show_create_kb"):
-    with st.form("create_kb_form", clear_on_submit=True):
-        st.markdown("<h4 style='color:#F5F7FA;margin:0 0 12px 0;font-size:16px;'>Create Knowledge Base</h4>", unsafe_allow_html=True)
-        new_kb_name = st.text_input(
-            "Knowledge Base Name *",
-            placeholder="e.g. Legal Research Q3",
-            key="new_kb_name",
-        )
-        new_kb_desc = st.text_input(
-            "Description (optional)",
-            placeholder="e.g. Ingested regulatory guidelines and filings",
-            key="new_kb_desc",
-        )
-        col_s, col_c = st.columns(2)
-        with col_s:
-            submitted = st.form_submit_button("Create", type="primary", use_container_width=True)
-        with col_c:
-            cancelled = st.form_submit_button("Cancel", use_container_width=True)
+    with st.container(border=True):
+        with st.form("create_kb_form", clear_on_submit=True):
+            st.markdown("<h4 style='color:var(--text);margin:0 0 12px 0;font-size:16px;font-weight:700;'>Create Knowledge Base</h4>", unsafe_allow_html=True)
+            new_kb_name = st.text_input(
+                "Knowledge Base Name *",
+                placeholder="e.g. Financial Filings 2024",
+                key="new_kb_name",
+            )
+            new_kb_desc = st.text_input(
+                "Description (optional)",
+                placeholder="e.g. Annual reports and regulatory filings",
+                key="new_kb_desc",
+            )
+            col_s, col_c = st.columns(2)
+            with col_s:
+                submitted = st.form_submit_button("Create Knowledge Base", type="primary", use_container_width=True)
+            with col_c:
+                cancelled = st.form_submit_button("Cancel", use_container_width=True)
 
-    if submitted:
-        if not new_kb_name.strip():
-            st.error("Please enter a name for the knowledge base.")
-        else:
-            kb = context.user_registry.create_knowledge_base(user_id, new_kb_name.strip(), new_kb_desc.strip())
-            st.session_state["active_kb_id"] = kb.kb_id
-            st.session_state["active_kb_name"] = kb.name
+        if submitted:
+            if not new_kb_name.strip():
+                st.error("Please enter a name for the knowledge base.")
+            else:
+                kb = context.user_registry.create_knowledge_base(user_id, new_kb_name.strip(), new_kb_desc.strip())
+                st.session_state["active_kb_id"] = kb.kb_id
+                st.session_state["active_kb_name"] = kb.name
+                st.session_state.pop("show_create_kb", None)
+                st.success(f"Knowledge base '{kb.name}' created.")
+                st.rerun()
+        elif cancelled:
             st.session_state.pop("show_create_kb", None)
-            st.success(f"Knowledge base '{kb.name}' created.")
             st.rerun()
-    elif cancelled:
-        st.session_state.pop("show_create_kb", None)
-        st.rerun()
 
 if not active_kb_id:
     st.stop()
 
 # ── Manage Knowledge Bases (Rename / Delete) ─────────────────────────────────
-with st.expander("Manage Knowledge Bases", expanded=False):
+with st.expander(f"Manage Knowledge Bases ({len(kbs)} available)", expanded=False):
     for kb in kbs:
         col_info, col_ren, col_del = st.columns([4, 1, 1], vertical_alignment="center")
         with col_info:
             doc_count = kb.document_count
             st.markdown(
                 f"**{kb.name}** &nbsp;·&nbsp; "
-                f"<span style='color:#A0AABC;font-size:12px;'>"
+                f"<span style='color:var(--text-muted);font-size:12px;'>"
                 f"{doc_count} documents · Created {kb.created_at[:10]}</span>",
                 unsafe_allow_html=True,
             )
@@ -173,23 +195,29 @@ with st.expander("Manage Knowledge Bases", expanded=False):
                     st.session_state.pop(f"confirm_del_{kb.kb_id}", None)
                     st.rerun()
 
-st.markdown("<hr style='border-color: #293244; margin: 20px 0;'/>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:var(--border);margin:20px 0;'/>", unsafe_allow_html=True)
 
 # ── Upload Section ───────────────────────────────────────────────────────────
-st.markdown(
+render_html(
     f"""
-    <div style="margin-bottom: 12px;">
-      <span style="font-size: 17px; font-weight: 700; color: #F5F7FA;">Upload Documents</span>
-      <span style="font-size: 13px; color: #A0AABC; margin-left: 8px;">
-        to <strong style="color: #F5F7FA;">{active_kb_name}</strong>
+    <div style="margin-bottom:12px;">
+      <span style="font-size:18px;font-weight:800;color:var(--text);">Upload &amp; Ingest Documents</span>
+      <span style="font-size:13.5px;color:var(--text-muted);margin-left:8px;">
+        into <strong style="color:var(--accent);">{active_kb_name}</strong>
       </span>
     </div>
-    <div style="background: #151A24; border: 1px dashed #293244; border-radius: 8px; padding: 10px 16px; margin-bottom: 12px; font-size: 13px; color: #A0AABC;">
-      Supported formats: <strong style="color: #F5F7FA;">PDF, DOCX, TXT</strong> &nbsp;·&nbsp;
-      Max file size: <strong style="color: #F5F7FA;">{context.settings.upload_size_limit_mb} MB</strong> per file
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:14px 18px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+      <div style="display:flex;align-items:center;gap:12px;">
+        <span style="font-size:13px;font-weight:600;color:var(--text-muted);">Supported Formats:</span>
+        <span class="badge" style="background:var(--accent-light);color:var(--accent);border:1px solid var(--accent-border);">PDF</span>
+        <span class="badge" style="background:var(--vector-bg);color:var(--vector);border:1px solid var(--vector-border);">DOCX</span>
+        <span class="badge" style="background:var(--hybrid-bg);color:var(--hybrid);border:1px solid var(--hybrid-border);">TXT</span>
+      </div>
+      <div style="font-size:12.5px;color:var(--text-muted);">
+        Max size: <strong style="color:var(--text);">{context.settings.upload_size_limit_mb} MB</strong> per file
+      </div>
     </div>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
 uploaded_files = st.file_uploader(
@@ -206,14 +234,18 @@ if uploaded_files:
         size_kb = round(len(f.getvalue()) / 1024, 1)
         st.caption(f"• {f.name} ({size_kb} KB)")
 
-    if st.button("Upload Documents", type="primary", key="btn_trigger_upload"):
+    if st.button("Ingest & Index Documents", type="primary", icon=":material/upload:", key="btn_trigger_upload"):
         progress = st.progress(0.0)
         status = st.empty()
+        upload_dir = context.settings.upload_dir
         for idx, uf in enumerate(uploaded_files):
             file_bytes = uf.getvalue()
-            status.info(f"Ingesting {uf.name} ({round(len(file_bytes)/1024, 1)} KB)...")
+            status.info(f"Extracting, chunking, and embedding {uf.name} ({round(len(file_bytes)/1024, 1)} KB)...")
             try:
-                outcome = context.document_service.ingest_bytes(uf.name, file_bytes)
+                cached_path = _cache_upload(file_bytes, uf.name, upload_dir)
+                outcome = context.document_service.ingest_bytes(
+                    uf.name, file_bytes, source_path=cached_path
+                )
                 context.user_registry.add_document_to_kb(active_kb_id, outcome.document.document_id)
                 if outcome.errors:
                     st.error(f"{uf.name}: {'; '.join(outcome.errors)}")
@@ -232,37 +264,105 @@ if uploaded_files:
         status.empty()
         st.rerun()
 
-st.markdown("<hr style='border-color: #293244; margin: 20px 0;'/>", unsafe_allow_html=True)
+st.markdown("<hr style='border-color:var(--border);margin:24px 0;'/>", unsafe_allow_html=True)
 
-# ── Documents Table ──────────────────────────────────────────────────────────
+# ── Documents Table & Search/Filter ──────────────────────────────────────────
 kb_doc_ids = context.user_registry.get_kb_document_ids(active_kb_id, user_id)
 all_docs = context.registry.list_documents()
 documents = [d for d in all_docs if d["document_id"] in set(kb_doc_ids)]
 
-st.markdown(
+total_kb_chunks = sum(d.get("chunk_count", 0) for d in documents)
+total_kb_entities = sum(d.get("entity_count", 0) for d in documents)
+total_kb_rels = sum(d.get("relationship_count", 0) for d in documents)
+
+render_html(
     f"""
-    <div style="font-size: 17px; font-weight: 700; color: #F5F7FA; margin-bottom: 12px;">
-      Documents in <span style="color: #8B7CFF;">{active_kb_name}</span>
-      <span style="font-size: 13px; font-weight: 400; color: #A0AABC; margin-left: 6px;">
-        ({len(documents)} documents)
+    <div style="font-size:18px;font-weight:800;color:var(--text);margin-bottom:12px;">
+      Documents in <span style="color:var(--accent);">{active_kb_name}</span>
+      <span style="font-size:13px;font-weight:500;color:var(--text-muted);margin-left:6px;">
+        ({len(documents)} total)
       </span>
     </div>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
+if documents:
+    kb_s1, kb_s2, kb_s3, kb_s4 = st.columns(4)
+    with kb_s1:
+        render_html(
+            f"""<div class="stat-card" style="padding:14px 16px;">
+              <div class="stat-value" style="font-size:22px;">{len(documents)}</div>
+              <div class="stat-label">Documents</div>
+            </div>"""
+        )
+    with kb_s2:
+        render_html(
+            f"""<div class="stat-card" style="padding:14px 16px;">
+              <div class="stat-value" style="font-size:22px;color:var(--vector);">{total_kb_chunks}</div>
+              <div class="stat-label">Vector Chunks</div>
+            </div>"""
+        )
+    with kb_s3:
+        render_html(
+            f"""<div class="stat-card" style="padding:14px 16px;">
+              <div class="stat-value" style="font-size:22px;color:var(--graph);">{total_kb_entities}</div>
+              <div class="stat-label">Entities</div>
+            </div>"""
+        )
+    with kb_s4:
+        render_html(
+            f"""<div class="stat-card" style="padding:14px 16px;">
+              <div class="stat-value" style="font-size:22px;color:var(--hybrid);">{total_kb_rels}</div>
+              <div class="stat-label">Relationships</div>
+            </div>"""
+        )
+    render_html("<div style='height:14px;'></div>")
+
+# Search & Status Filter Controls
+f_col1, f_col2 = st.columns([3, 1.5], vertical_alignment="center")
+with f_col1:
+    doc_search = st.text_input(
+        "Search documents",
+        placeholder="Search documents by name...",
+        key="doc_search_query",
+        label_visibility="collapsed",
+    )
+with f_col2:
+    status_filter = st.selectbox(
+        "Filter by status",
+        options=["All Statuses", "Ready / Indexed", "Partial", "Failed"],
+        index=0,
+        key="doc_status_filter",
+        label_visibility="collapsed",
+    )
+
+# Apply in-memory filters
+filtered_docs = documents
+if doc_search.strip():
+    q = doc_search.strip().lower()
+    filtered_docs = [d for d in filtered_docs if q in d.get("document_name", "").lower()]
+
+if status_filter != "All Statuses":
+    if status_filter == "Ready / Indexed":
+        filtered_docs = [d for d in filtered_docs if d.get("status", "").lower() in ("indexed", "ready")]
+    elif status_filter == "Partial":
+        filtered_docs = [d for d in filtered_docs if d.get("status", "").lower() == "partial"]
+    elif status_filter == "Failed":
+        filtered_docs = [d for d in filtered_docs if d.get("status", "").lower() == "failed"]
+
 if not documents:
-    st.markdown(
+    render_html(
         """
-        <div class="rag-card" style="text-align: center; padding: 36px 20px;">
-          <div style="font-size: 16px; font-weight: 600; color: #F5F7FA;">No documents uploaded yet</div>
-          <div style="font-size: 13px; color: #A0AABC; margin-top: 6px;">
-            Use the upload area above to add documents to your knowledge corpus.
+        <div class="rag-card" style="text-align:center;padding:40px 20px;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">No documents uploaded yet</div>
+          <div style="font-size:13.5px;color:var(--text-muted);margin-top:6px;">
+            Use the drag-and-drop zone above to ingest your first research document.
           </div>
         </div>
-        """,
-        unsafe_allow_html=True,
+        """
     )
+elif not filtered_docs:
+    st.info("No documents match your search criteria.")
 else:
     STATUS_LABELS = {
         "indexed": "Ready",
@@ -279,16 +379,17 @@ else:
     }
 
     df_rows = []
-    for d in documents:
+    for d in filtered_docs:
         status_raw = d.get("status", "").lower()
         df_rows.append(
             {
                 "Document Name": d["document_name"],
-                "File Type": MIME_LABELS.get(d.get("mime_type", ""), d.get("mime_type", "TXT")),
+                "Format": MIME_LABELS.get(d.get("mime_type", ""), d.get("mime_type", "TXT")),
                 "File Size (KB)": round(float(d.get("file_size") or 0) / 1024, 1),
-                "Processing Status": STATUS_LABELS.get(status_raw, status_raw.capitalize()),
-                "Chunks": d.get("chunk_count", 0),
+                "Status": STATUS_LABELS.get(status_raw, status_raw.capitalize()),
+                "Vector Chunks": d.get("chunk_count", 0),
                 "Entities": d.get("entity_count", 0),
+                "Relationships": d.get("relationship_count", 0),
                 "Upload Date": (d.get("created_at") or "")[:10],
             }
         )
@@ -296,12 +397,12 @@ else:
     st.dataframe(pd.DataFrame(df_rows), use_container_width=True, hide_index=True)
 
     # ── Document Details Inspector & Actions ─────────────────────────────────
-    st.markdown("<hr style='border-color: #293244; margin: 20px 0;'/>", unsafe_allow_html=True)
-    st.markdown("### Document Details & Actions")
+    st.markdown("<hr style='border-color:var(--border);margin:24px 0;'/>", unsafe_allow_html=True)
+    st.markdown("### Document Inspector & Actions")
 
     doc_options = {
         d["document_id"]: f"{d['document_name']} [{STATUS_LABELS.get(d.get('status',''), d.get('status',''))}]"
-        for d in documents
+        for d in filtered_docs
     }
     selected_id = st.selectbox(
         "Select document to inspect",
@@ -313,42 +414,44 @@ else:
     if selected_id:
         sel = next(d for d in documents if d["document_id"] == selected_id)
         status_raw = sel.get("status", "").lower()
+        status_badge_type = (
+            "badge-success" if status_raw in ("indexed", "ready") else ("badge-warning" if status_raw == "partial" else "badge-error")
+        )
 
-        meta_col, action_col = st.columns([3, 1])
+        meta_col, action_col = st.columns([3.2, 1.3])
         with meta_col:
-            st.markdown(
+            render_html(
                 f"""
-                <div class="rag-card">
-                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <div class="rag-card" style="padding:20px;">
+                  <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:16px;">
                     <div>
-                      <div style="font-size: 11px; color: #A0AABC; text-transform: uppercase;">Document Name</div>
-                      <div style="font-size: 14px; font-weight: 600; color: #F5F7FA; margin-top: 2px;">{sel['document_name']}</div>
+                      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:600;">Document</div>
+                      <div style="font-size:14px;font-weight:700;color:var(--text);margin-top:4px;word-break:break-all;">{sel['document_name']}</div>
                     </div>
                     <div>
-                      <div style="font-size: 11px; color: #A0AABC; text-transform: uppercase;">Status</div>
-                      <div style="font-size: 14px; font-weight: 600; color: #F5F7FA; margin-top: 2px;">{STATUS_LABELS.get(status_raw, status_raw.capitalize())}</div>
+                      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:600;">Status</div>
+                      <div style="margin-top:4px;"><span class="badge {status_badge_type}">{STATUS_LABELS.get(status_raw, status_raw.capitalize())}</span></div>
                     </div>
                     <div>
-                      <div style="font-size: 11px; color: #A0AABC; text-transform: uppercase;">Vector Chunks</div>
-                      <div style="font-size: 14px; font-weight: 600; color: #60A5FA; margin-top: 2px;">{sel.get('chunk_count', 0)}</div>
+                      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:600;">Vector Chunks</div>
+                      <div style="font-size:15px;font-weight:800;color:var(--vector);margin-top:4px;">{sel.get('chunk_count', 0)} chunks</div>
                     </div>
                     <div>
-                      <div style="font-size: 11px; color: #A0AABC; text-transform: uppercase;">Graph Provenance</div>
-                      <div style="font-size: 14px; font-weight: 600; color: #A78BFA; margin-top: 2px;">
-                        {sel.get('entity_count', 0)} entities · {sel.get('relationship_count', 0)} relationships
+                      <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;font-weight:600;">Graph Provenance</div>
+                      <div style="font-size:14px;font-weight:700;color:var(--graph);margin-top:4px;">
+                        {sel.get('entity_count', 0)} ent · {sel.get('relationship_count', 0)} rel
                       </div>
                     </div>
                   </div>
                 </div>
-                """,
-                unsafe_allow_html=True,
+                """
             )
             if sel.get("error_message"):
                 st.error(f"Processing Error: {sel['error_message']}")
 
         with action_col:
-            st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
-            if st.button("Re-index Document", key="reindex_btn", use_container_width=True):
+            st.markdown("<div style='height:4px;'></div>", unsafe_allow_html=True)
+            if st.button("Re-index Document", icon=":material/refresh:", key="reindex_btn", use_container_width=True):
                 src_path = sel.get("source_path")
                 if src_path and Path(src_path).exists():
                     with st.spinner("Re-indexing document..."):
@@ -362,7 +465,7 @@ else:
                 else:
                     st.warning("Original source file not found on disk.")
 
-            if st.button("Delete Document", key="del_doc_btn", use_container_width=True):
+            if st.button("Delete Document", icon=":material/delete:", key="del_doc_btn", use_container_width=True):
                 st.session_state["confirm_doc_delete"] = selected_id
 
         if st.session_state.get("confirm_doc_delete") == selected_id:
@@ -387,13 +490,13 @@ else:
         doc_entities = [e for e in all_entities if e.get("document_id") == selected_id]
 
         if chunks or doc_entities:
-            tab_chunks, tab_entities, tab_graph = st.tabs(
-                [f"Chunks ({len(chunks)})", f"Entities ({len(doc_entities)})", "Knowledge Graph Preview"]
+            tab_chunks, tab_entities = st.tabs(
+                [f"Vector Chunks ({len(chunks)})", f"Extracted Graph Entities ({len(doc_entities)})"]
             )
             with tab_chunks:
                 if chunks:
                     for chunk in chunks[:15]:
-                        with st.expander(f"Chunk #{chunk['chunk_index']} (Page {chunk.get('page_number') or 1})"):
+                        with st.expander(f"Chunk #{chunk['chunk_index']} · Page {chunk.get('page_number') or 1}"):
                             st.text(chunk["text"][:1200])
                     if len(chunks) > 15:
                         st.caption(f"Showing first 15 of {len(chunks)} chunks.")
@@ -414,47 +517,4 @@ else:
                     )
                     st.dataframe(df_ents, use_container_width=True, hide_index=True)
                 else:
-                    st.info("No entities extracted.")
-
-            with tab_graph:
-                st.caption("Extracted entity relationships for this document:")
-                all_rels = context.registry.list_relationships()
-                doc_ent_ids = {e["entity_id"] for e in doc_entities}
-                doc_rels = [
-                    r for r in all_rels
-                    if r.get("source_entity_id") in doc_ent_ids or r.get("target_entity_id") in doc_ent_ids
-                ]
-                if doc_rels:
-                    df_rels = pd.DataFrame(
-                        [
-                            {
-                                "Source Entity": r.get("source_entity_name", ""),
-                                "Relationship": r.get("relationship_type", ""),
-                                "Target Entity": r.get("target_entity_name", ""),
-                            }
-                            for r in doc_rels[:40]
-                        ]
-                    )
-                    st.dataframe(df_rels, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No relational edges found for this document.")
-
-# ── Bulk Management ──────────────────────────────────────────────────────────
-if documents:
-    st.markdown("<hr style='border-color: #293244; margin: 24px 0;'/>", unsafe_allow_html=True)
-    with st.expander("Danger Zone: Clear Knowledge Base Documents", expanded=False):
-        st.markdown(f"Remove all {len(documents)} documents from **{active_kb_name}**.")
-        confirm_clear = st.checkbox(
-            f"I confirm I want to permanently remove all documents from '{active_kb_name}'",
-            key="clear_all_confirm",
-        )
-        if st.button("Remove All Documents", disabled=not confirm_clear, type="primary"):
-            with st.spinner("Removing documents..."):
-                for doc_id in kb_doc_ids:
-                    try:
-                        context.document_service.delete_document(doc_id)
-                        context.user_registry.remove_document_from_kb(active_kb_id, doc_id)
-                    except Exception:
-                        pass
-            st.success(f"All documents removed from '{active_kb_name}'.")
-            st.rerun()
+                    st.info("No entities extracted for this document.")

@@ -1,0 +1,42 @@
+
+digraph UserFlow {
+    rankdir=TB;
+    node [shape=box, style="rounded,filled", fillcolor="#f0f4f8", fontname="Helvetica", fontsize=10, color="#334e68"];
+    edge [fontname="Helvetica", fontsize=9, color="#486581"];
+
+    Start [shape=oval, fillcolor="#bbf7d0", color="#15803d", label="Start"];
+    Login [label="User Authentication
+(Register / Login)"];
+    SelectKB [label="Create or Select
+Isolated Knowledge Base"];
+    Upload [label="Upload Domain Corpus
+(PDF, TXT, DOCX)"];
+    Ingest [label="Dual-Store Ingestion Engine
+(Chunking, 384-d Embeddings, Graph Extraction)", fillcolor="#fed7aa", color="#c2410c"];
+    Mode [shape=diamond, fillcolor="#e0e7ff", color="#4338ca", label="Select
+Workflow"];
+    
+    Chat [label="Conversational Chat Lab
+(Multi-turn, Citations, Latency)"];
+    Compare [label="Side-by-Side Comparison
+(Vector vs. Graph vs. Hybrid)"];
+    GraphExp [label="Graph Explorer
+(Interactive Neo4j Entity Visualizer)"];
+    EvalLab [label="Evaluation Lab
+(RAGAs, IR Metrics, Benchmark Datasets)"];
+    
+    Results [label="Analytics & Export
+(Plotly Graphs, Telemetry, CSV Export)", fillcolor="#fef08a", color="#a16207"];
+    End [shape=oval, fillcolor="#fecaca", color="#b91c1c", label="End"];
+
+    Start -> Login -> SelectKB -> Upload -> Ingest -> Mode;
+    Mode -> Chat;
+    Mode -> Compare;
+    Mode -> GraphExp;
+    Mode -> EvalLab;
+    Chat -> Results;
+    Compare -> Results;
+    GraphExp -> Results;
+    EvalLab -> Results;
+    Results -> End;
+}

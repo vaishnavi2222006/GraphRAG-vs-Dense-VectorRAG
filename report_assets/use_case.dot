@@ -1,0 +1,59 @@
+
+digraph UseCase {
+    rankdir=LR;
+    node [fontname="Helvetica", fontsize=10];
+    edge [fontname="Helvetica", fontsize=9, color="#627d98"];
+
+    subgraph cluster_system {
+        label = "RAG Benchmark Lab System Boundary";
+        style=dashed;
+        color="#1e3a8a";
+        fontname="Helvetica-Bold";
+        fontsize=12;
+        
+        node [shape=ellipse, style=filled, fillcolor="#f8fafc", color="#3b82f6"];
+        UC1 [label="UC1: User Authentication & Security"];
+        UC2 [label="UC2: Manage Isolated Knowledge Bases"];
+        UC3 [label="UC3: Upload & Preprocess Corpus Documents"];
+        UC4 [label="UC4: Dual-Store Indexing (Qdrant + Neo4j)"];
+        UC5 [label="UC5: Vector RAG Cosine Retrieval"];
+        UC6 [label="UC6: GraphRAG Multi-Hop Traversal"];
+        UC7 [label="UC7: Hybrid Retrieval via RRF Fusion"];
+        UC8 [label="UC8: Intelligent Query Routing"];
+        UC9 [label="UC9: Multi-Turn Chat with Citations"];
+        UC10 [label="UC10: 3-Way Side-by-Side Comparison"];
+        UC11 [label="UC11: Benchmark Metric Evaluation (RAGAs)"];
+        UC12 [label="UC12: Performance Telemetry & CSV Export"];
+    }
+
+    subgraph cluster_actors {
+        style=invis;
+        Actor [shape=box, style="filled,rounded", fillcolor="#dbeafe", color="#1d4ed8", label="Researcher /
+B.Tech Student
+(User)"];
+        DB [shape=box, style="filled,rounded", fillcolor="#e0e7ff", color="#4338ca", label="Database Engines
+(Qdrant, Neo4j, SQLite)"];
+        LLM [shape=box, style="filled,rounded", fillcolor="#fce7f3", color="#be185d", label="LLM Inference
+(Ollama Llama 3.1 /
+Extractive Engine)"];
+    }
+
+    Actor -> UC1;
+    Actor -> UC2;
+    Actor -> UC3;
+    Actor -> UC9;
+    Actor -> UC10;
+    Actor -> UC11;
+    Actor -> UC12;
+
+    UC3 -> UC4 [style=dotted, label="<<includes>>"];
+    UC4 -> DB;
+    UC5 -> DB;
+    UC6 -> DB;
+    UC7 -> UC5 [style=dotted, label="<<includes>>"];
+    UC7 -> UC6 [style=dotted, label="<<includes>>"];
+    UC8 -> UC7;
+    UC9 -> LLM;
+    UC10 -> LLM;
+    UC11 -> LLM;
+}

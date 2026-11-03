@@ -256,8 +256,9 @@ for msg in messages:
         badge = render_strategy_badge(strategy) if strategy else ""
         mock_notice = " · <em style='color:#f59e0b;font-size:10px;'>MOCK MODE</em>" if msg.get("mock_mode") else ""
         latency_info = ""
-        if msg.get("total_latency_ms"):
-            latency_info = f" · {msg['total_latency_ms']:.0f}ms"
+        tot_lat = msg.get("total_latency_ms")
+        if tot_lat is not None and isinstance(tot_lat, (int, float)) and tot_lat > 0:
+            latency_info = f" · {tot_lat:.0f}ms"
 
         st.markdown(f"""
         <div style="display:flex;justify-content:flex-start;margin:4px 0;">
@@ -282,8 +283,10 @@ for msg in messages:
             with st.expander(f"📋 Sources & Evidence ({len(citations)} citations)"):
                 if citations:
                     for c in citations:
+                        score_val = c.get("score")
+                        score_str = f" · Score: {score_val:.3f}" if isinstance(score_val, (int, float)) else ""
                         st.markdown(f"**{c.get('document_name','?')}** — Chunk #{c.get('chunk_index','?')} "
-                                    f"(Page {c.get('page_number') or 1}) · Score: {c.get('score', 0):.3f}")
+                                    f"(Page {c.get('page_number') or 1}){score_str}")
                 if msg.get("graph_evidence"):
                     ge = msg["graph_evidence"]
                     rels = ge.get("relationships", [])
@@ -296,6 +299,10 @@ for msg in messages:
             for w in msg["warnings"]:
                 if "mock_mode" not in w:
                     st.caption(f"⚠️ {w}")
+
+        if msg.get("errors"):
+            for err in msg["errors"]:
+                st.error(f"❌ {err}")
 
 # ─── Input Area ───────────────────────────────────────────────────────────────
 st.markdown("---")
@@ -312,6 +319,12 @@ for i, sug in enumerate(suggestions):
     with sug_cols[i]:
         if st.button(f"💡 {sug[:30]}...", key=f"sug_{i}", use_container_width=True, help=sug):
             st.session_state["chat_input_prefill"] = sug
+
+import os
+
+if context.settings.llm_provider == "gemini" and not (context.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")):
+    st.warning("⚠️ **Google Gemini is configured as the active answer-generation provider, but `GEMINI_API_KEY` is not set.** "
+               "Please add `GEMINI_API_KEY=your_key_here` to your `.env` file or export it in your environment to generate live grounded answers.")
 
 # Chat input
 question = st.chat_input("Ask a question about your documents...")
