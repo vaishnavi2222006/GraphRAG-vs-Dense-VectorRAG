@@ -23,6 +23,7 @@ dependencies = [
   "pytest>=8.2,<9",
   "google-genai>=0.1.0",
   "python-dotenv>=1.0.0",
+  "pymongo>=4.9,<5",
 ]
 
 [project.optional-dependencies]

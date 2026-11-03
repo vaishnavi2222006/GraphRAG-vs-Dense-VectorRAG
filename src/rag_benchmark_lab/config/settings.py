@@ -76,6 +76,9 @@ class AppSettings:
     sqlite_path: Path = field(default_factory=lambda: Path(_env("SQLITE_PATH", "./data/runtime/rag_benchmark_lab.sqlite3")))
     log_level: str = field(default_factory=lambda: _env("LOG_LEVEL", "INFO").upper())
 
+    mongodb_uri: str = field(default_factory=lambda: _env("MONGODB_URI", "").strip())
+    mongodb_database: str = field(default_factory=lambda: _env("MONGODB_DATABASE", "rag_benchmark_lab").strip())
+    mongodb_users_collection: str = field(default_factory=lambda: _env("MONGODB_USERS_COLLECTION", "users").strip())
     neo4j_uri: str = field(default_factory=lambda: _env("NEO4J_URI", "bolt://localhost:7687"))
     neo4j_username: str = field(default_factory=lambda: _env("NEO4J_USERNAME", "neo4j"))
     neo4j_password: str = field(default_factory=lambda: _env("NEO4J_PASSWORD", "change-me"))
@@ -152,7 +155,12 @@ class AppSettings:
 
     def to_dict(self) -> dict[str, object]:
         data = asdict(self)
-        for key in ("neo4j_password", "qdrant_api_key", "gemini_api_key"):
+        for key in (
+            "neo4j_password",
+            "qdrant_api_key",
+            "gemini_api_key",
+            "mongodb_uri",
+        ):
             data[key] = "***" if data.get(key) else ""
         data["app_data_dir"] = str(self.app_data_dir)
         data["upload_dir"] = str(self.upload_dir)

@@ -6,6 +6,8 @@ import os
 import re
 import secrets
 import sqlite3
+from pymongo import MongoClient
+from pymongo.errors import DuplicateKeyError
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +41,7 @@ def _hash_password(plaintext: str) -> str:
     if _HASHER == "argon2":
         return _argon2.hash(plaintext)
     if _HASHER == "bcrypt":
+        # pyrefly: ignore[missing-import]
         import bcrypt
         return bcrypt.hashpw(plaintext.encode(), bcrypt.gensalt(rounds=12)).decode()
     # PBKDF2 fallback
@@ -48,29 +51,47 @@ def _hash_password(plaintext: str) -> str:
 
 
 def _verify_password(plaintext: str, stored_hash: str) -> bool:
-    if stored_hash.startswith("$argon2") or _HASHER == "argon2":
+    """Verify Argon2, bcrypt, or PBKDF2 password hashes."""
+
+    # Argon2 verification
+    if stored_hash.startswith("$argon2"):
         try:
-            from argon2 import PasswordHasher as Argon2Hasher
-            from argon2.exceptions import VerifyMismatchError
-            ph = Argon2Hasher()
+            from argon2 import PasswordHasher
+            ph = PasswordHasher()
             return ph.verify(stored_hash, plaintext)
         except Exception:
             return False
-    if stored_hash.startswith("$2") or _HASHER == "bcrypt":
+
+    # bcrypt verification
+    if stored_hash.startswith("$2"):
         try:
             import bcrypt
-            return bcrypt.checkpw(plaintext.encode(), stored_hash.encode())
+            return bcrypt.checkpw(
+                plaintext.encode(),
+                stored_hash.encode(),
+            )
         except Exception:
             return False
-    # PBKDF2
+
+    # PBKDF2 verification
     if stored_hash.startswith("pbkdf2:"):
         try:
-            _, alg, iterations, salt, dk_hex = stored_hash.split(":")
-            dk = hashlib.pbkdf2_hmac(alg.split(":")[0] if ":" in alg else alg, plaintext.encode(), salt.encode(), int(iterations))
-            return secrets.compare_digest(dk.hex(), dk_hex)
+            _, algorithm, iterations, salt, expected_hash = stored_hash.split(":")
+            derived_key = hashlib.pbkdf2_hmac(
+                algorithm,
+                plaintext.encode(),
+                salt.encode(),
+                int(iterations),
+            )
+            return secrets.compare_digest(
+                derived_key.hex(),
+                expected_hash,
+            )
         except Exception:
             return False
+
     return False
+
 
 
 def _validate_email(email: str) -> bool:
@@ -92,10 +113,32 @@ def _validate_password(password: str) -> list[str]:
 
 
 class UserRegistry:
-    """Manages users, knowledge bases, conversations, and messages in SQLite."""
+    """Manages authentication in MongoDB and application records in SQLite."""
 
-    def __init__(self, sqlite_path: Path | str) -> None:
+    def __init__(
+        self,
+        sqlite_path: Path | str,
+        mongodb_uri: str = "",
+        mongodb_database: str = "rag_benchmark_lab",
+        mongodb_users_collection: str = "users",
+    ) -> None:
         self.sqlite_path = Path(sqlite_path)
+
+        self.mongo_client = None
+        self.mongo_users = None
+
+        if mongodb_uri:
+            self.mongo_client = MongoClient(
+                mongodb_uri,
+                serverSelectionTimeoutMS=10000,
+            )
+
+            self.mongo_client.admin.command("ping")
+
+            self.mongo_users = self.mongo_client[
+                mongodb_database
+            ][mongodb_users_collection]
+
         self._initialize()
 
     def _connect(self) -> sqlite3.Connection:
@@ -217,34 +260,92 @@ class UserRegistry:
 
     # ─── User Management ───────────────────────────────────────────────────────
 
-    def register_user(self, full_name: str, email: str, password: str) -> tuple[UserRecord | None, list[str]]:
-        """Register a new user. Returns (user, errors)."""
+    def register_user(
+        self,
+        full_name: str,
+        email: str,
+        password: str,
+    ) -> tuple[UserRecord | None, list[str]]:
+        """Register a user in MongoDB and maintain a SQLite compatibility record."""
+
         errors: list[str] = []
         full_name = full_name.strip()
         email = email.strip().lower()
 
         if not full_name:
             errors.append("Full name is required.")
+
         if not _validate_email(email):
             errors.append("Invalid email address format.")
-        pwd_errors = _validate_password(password)
-        errors.extend(pwd_errors)
+
+        errors.extend(_validate_password(password))
 
         if errors:
             return None, errors
 
-        with self._connect() as conn:
-            existing = conn.execute("SELECT user_id FROM users WHERE email = ?", (email,)).fetchone()
-            if existing:
-                return None, ["An account with this email address already exists."]
+        if self.mongo_users is None:
+            return None, ["MongoDB is not configured."]
 
-            user_id = hashlib.sha256(f"{email}:{secrets.token_hex(16)}".encode()).hexdigest()[:32]
-            now = datetime.now(timezone.utc).isoformat()
-            password_hash = _hash_password(password)
-            conn.execute(
-                "INSERT INTO users (user_id, full_name, email, password_hash, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)",
-                (user_id, full_name, email, password_hash, now, now),
-            )
+        existing_sqlite = None
+
+        with self._connect() as conn:
+            existing_sqlite = conn.execute(
+                "SELECT user_id FROM users WHERE email = ?",
+                (email,),
+            ).fetchone()
+
+        if existing_sqlite or self.mongo_users.find_one({"email": email}):
+            return None, [
+                "An account with this email address already exists."
+            ]
+
+        user_id = hashlib.sha256(
+            f"{email}:{secrets.token_hex(16)}".encode()
+        ).hexdigest()[:32]
+
+        now = datetime.now(timezone.utc).isoformat()
+        password_hash = _hash_password(password)
+
+        mongo_user = {
+            "user_id": user_id,
+            "full_name": full_name,
+            "email": email,
+            "password_hash": password_hash,
+            "is_active": True,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        try:
+            self.mongo_users.insert_one(mongo_user)
+
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO users (
+                        user_id, full_name, email, password_hash,
+                        is_active, created_at, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        full_name,
+                        email,
+                        password_hash,
+                        now,
+                        now,
+                    ),
+                )
+
+        except DuplicateKeyError:
+            return None, [
+                "An account with this email address already exists."
+            ]
+
+        except Exception as exc:
+            self.mongo_users.delete_one({"user_id": user_id})
+            return None, [f"Registration failed: {exc}"]
 
         return UserRecord(
             user_id=user_id,
@@ -255,26 +356,139 @@ class UserRegistry:
             updated_at=now,
         ), []
 
-    def authenticate_user(self, email: str, password: str) -> tuple[UserRecord | None, str]:
-        """Authenticate a user. Returns (user, error_message)."""
-        email = email.strip().lower()
-        with self._connect() as conn:
-            row = conn.execute("SELECT * FROM users WHERE email = ? AND is_active = 1", (email,)).fetchone()
-        if row is None:
-            return None, "No account found with that email address."
-        stored_hash = row["password_hash"]
-        if not _verify_password(password, stored_hash):
-            return None, "Incorrect password."
-        return UserRecord(
-            user_id=row["user_id"],
-            full_name=row["full_name"],
-            email=row["email"],
-            password_hash=row["password_hash"],
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-            is_active=bool(row["is_active"]),
-        ), ""
+    def authenticate_user(
+        self,
+        email: str,
+        password: str,
+    ) -> tuple[UserRecord | None, str]:
+        """Authenticate through MongoDB and migrate legacy SQLite users."""
 
+        email = email.strip().lower()
+
+        if self.mongo_users is None:
+            return None, "MongoDB is not configured."
+
+        try:
+            # 1. Check MongoDB first.
+            mongo_user = self.mongo_users.find_one({"email": email})
+
+            if mongo_user is not None:
+                if not mongo_user.get("is_active", False):
+                    return None, "This account is inactive."
+
+                stored_hash = mongo_user.get("password_hash", "")
+
+                if not _verify_password(password, stored_hash):
+                    return None, "Incorrect password."
+
+                user_id = mongo_user["user_id"]
+
+                # 2. Ensure a SQLite compatibility record exists.
+                with self._connect() as conn:
+                    existing = conn.execute(
+                        "SELECT * FROM users WHERE user_id = ? OR email = ?",
+                        (user_id, email),
+                    ).fetchone()
+
+                    if existing is None:
+                        conn.execute(
+                            """
+                            INSERT INTO users (
+                                user_id, full_name, email, password_hash,
+                                is_active, created_at, updated_at
+                            )
+                            VALUES (?, ?, ?, ?, 1, ?, ?)
+                            """,
+                            (
+                                user_id,
+                                mongo_user["full_name"],
+                                email,
+                                stored_hash,
+                                mongo_user["created_at"],
+                                mongo_user["updated_at"],
+                            ),
+                        )
+                    elif (
+                        existing["user_id"] != user_id
+                        or existing["email"] != email
+                    ):
+                        return None, (
+                            "Account synchronization conflict. "
+                            "Please contact support."
+                        )
+
+                return UserRecord(
+                    user_id=user_id,
+                    full_name=mongo_user["full_name"],
+                    email=email,
+                    password_hash=stored_hash,
+                    created_at=mongo_user["created_at"],
+                    updated_at=mongo_user["updated_at"],
+                    is_active=True,
+                ), ""
+
+            # 3. MongoDB account not found: check legacy SQLite.
+            with self._connect() as conn:
+                row = conn.execute(
+                    """
+                    SELECT * FROM users
+                    WHERE email = ? AND is_active = 1
+                    """,
+                    (email,),
+                ).fetchone()
+
+            if row is None:
+                return None, "No account found with that email address."
+
+            stored_hash = row["password_hash"]
+
+            if not _verify_password(password, stored_hash):
+                return None, "Incorrect password."
+
+            # 4. Migrate the existing account without changing its ID.
+            legacy_user = {
+                "user_id": row["user_id"],
+                "full_name": row["full_name"],
+                "email": row["email"],
+                "password_hash": stored_hash,
+                "is_active": True,
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
+
+            try:
+                self.mongo_users.insert_one(legacy_user)
+                mongo_user = legacy_user
+
+            except DuplicateKeyError:
+                # Another login may have migrated this account concurrently.
+                mongo_user = self.mongo_users.find_one({"email": email})
+
+                if (
+                    mongo_user is None
+                    or mongo_user.get("user_id") != row["user_id"]
+                    or not _verify_password(
+                        password,
+                        mongo_user.get("password_hash", ""),
+                    )
+                ):
+                    return None, "Account migration conflict."
+
+            return UserRecord(
+                user_id=row["user_id"],
+                full_name=row["full_name"],
+                email=row["email"],
+                password_hash=row["password_hash"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                is_active=True,
+            ), ""
+
+        except Exception:
+            return None, (
+                "Authentication service is temporarily unavailable. "
+                "Please try again."
+            )
     def get_user(self, user_id: str) -> UserRecord | None:
         with self._connect() as conn:
             row = conn.execute("SELECT * FROM users WHERE user_id = ?", (user_id,)).fetchone()

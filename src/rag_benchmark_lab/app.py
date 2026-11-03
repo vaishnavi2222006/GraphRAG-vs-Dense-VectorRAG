@@ -84,7 +84,12 @@ def build_context() -> AppContext:
     registry = DocumentRegistry(settings.sqlite_path)
     # User registry uses the same SQLite DB path but a separate file to avoid schema conflicts
     user_db_path = settings.sqlite_path.parent / "users.sqlite3"
-    user_registry = UserRegistry(user_db_path)
+    user_registry = UserRegistry(
+        user_db_path,
+        mongodb_uri=settings.mongodb_uri,
+        mongodb_database=settings.mongodb_database,
+        mongodb_users_collection=settings.mongodb_users_collection,
+    )
     embedding_service = EmbeddingService(settings.embedding_model, mock_mode=settings.llm_mock_mode)
 
     # 1. Qdrant client adapter: try configured URL, fallback to local in-memory
