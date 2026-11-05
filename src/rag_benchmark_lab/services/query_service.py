@@ -10,6 +10,7 @@ from ..retrieval.query_router import route_query
 from ..retrieval.vector_retriever import VectorRetriever
 from ..schemas.documents import AnswerResult, Citation, GraphEvidence, RetrievedChunk, RetrievalStrategy
 from ..utils.errors import AuthenticationError, QuotaExceededError, sanitize_secrets
+from .cost_service import CostService
 
 
 def _format_context(chunks: list[RetrievedChunk], limit_chars: int = 8000, graph_evidence: GraphEvidence | None = None) -> str:
@@ -54,6 +55,7 @@ class QueryService:
         llm_service: LLMService | OllamaLLMService,
         top_k: int,
         answer_temperature: float,
+        cost_service: CostService | None = None,
     ) -> None:
         self.vector_retriever = vector_retriever
         self.graph_retriever = graph_retriever
@@ -61,6 +63,7 @@ class QueryService:
         self.llm_service = llm_service
         self.top_k = top_k
         self.answer_temperature = answer_temperature
+        self.cost_service = cost_service or CostService()
 
     def _generate(
         self,
@@ -92,13 +95,18 @@ class QueryService:
 
         # 2. Safe API-key validation without making network calls
         if hasattr(self.llm_service, "is_configured") and not self.llm_service.is_configured():
-            msg = "Gemini API key is not configured. Please update GEMINI_API_KEY in your .env file and restart the application."
+            prov_name = getattr(self.llm_service, "provider_name", None)
+            if not prov_name:
+                cls_lower = self.llm_service.__class__.__name__.lower()
+                prov_name = "Groq" if "groq" in cls_lower else ("Gemini" if "gemini" in cls_lower else "LLM")
+            env_var = "GROQ_API_KEY" if "groq" in prov_name.lower() else ("GEMINI_API_KEY" if "gemini" in prov_name.lower() else "API_KEY")
+            msg = f"{prov_name} API key is not configured. Please update {env_var} in your .env file and restart the application."
             fallback_response = LLMResponse(
                 text=f"Error generating answer: {msg}",
                 model_name=getattr(self.llm_service, "model_name", "unknown"),
                 latency_ms=None,
                 mock_mode=False,
-                warnings=["gemini_api_key_not_configured"],
+                warnings=[f"{prov_name.lower()}_api_key_not_configured"],
             )
             err_msg = f"AuthenticationError: {msg}"
             meta = {
@@ -165,8 +173,8 @@ class QueryService:
                 selected_strategy=routing.selected_strategy,
                 citations=[],
                 retrieved_sources=[],
-                retrieval_latency_ms=0.0,
-                generation_latency_ms=0.0,
+                retrieval_latency_ms=None,
+                generation_latency_ms=None,
                 total_latency_ms=total_latency_ms,
                 model_name=getattr(self.llm_service, "model_name", "system"),
                 warnings=["empty_corpus_scope"],
@@ -186,7 +194,7 @@ class QueryService:
         errors: list[str] = []
         retrieved: list[RetrievedChunk] = []
         graph_evidence: GraphEvidence | None = None
-        retrieval_latency_ms: float | None = 0.0
+        retrieval_latency_ms: float | None = None
 
         # ── Step 1: Execute Retrieval independently ──────────────────────────
         if routing.selected_strategy == RetrievalStrategy.DIRECT:
@@ -256,8 +264,23 @@ class QueryService:
             raw_context_val = _format_context(retrieved, graph_evidence=graph_evidence)
 
         generation_status = "failed" if gen_errors else "success"
-        gen_latency = response.latency_ms if generation_status == "success" else None
-        total_latency = (perf_counter() - start) * 1000.0
+        if gen_errors:
+            gen_latency = None
+        else:
+            gen_latency = response.latency_ms
+
+        raw_elapsed = (perf_counter() - start) * 1000.0
+        if routing.selected_strategy == RetrievalStrategy.DIRECT:
+            total_latency = gen_latency
+        else:
+            if retrieval_latency_ms is not None and gen_latency is not None:
+                total_latency = max(raw_elapsed, retrieval_latency_ms + gen_latency)
+            elif retrieval_latency_ms is not None:
+                total_latency = retrieval_latency_ms
+            elif gen_latency is not None:
+                total_latency = gen_latency
+            else:
+                total_latency = None
 
         metadata = {
             "overridden": routing.overridden,
@@ -269,6 +292,33 @@ class QueryService:
             **gen_meta,
         }
 
+        # Resolve tokens, provider, and calculate per-query cost
+        p_tokens = response.prompt_tokens
+        c_tokens = response.completion_tokens
+        t_tokens = getattr(response, "total_tokens", None)
+        if t_tokens is None and p_tokens is not None and c_tokens is not None:
+            t_tokens = p_tokens + c_tokens
+
+        prov_name = getattr(self.llm_service, "provider_name", None)
+        if not prov_name:
+            cls_name = getattr(self.llm_service, "__class__", type(self.llm_service)).__name__.lower()
+            if "groq" in cls_name:
+                prov_name = "Groq"
+            elif "gemini" in cls_name:
+                prov_name = "Google Gemini"
+            elif "ollama" in cls_name:
+                prov_name = "Ollama"
+            else:
+                prov_name = "LLM"
+
+        cost_est = self.cost_service.calculate_cost(
+            prompt_tokens=p_tokens,
+            completion_tokens=c_tokens,
+            model_name=response.model_name,
+            provider=prov_name,
+            total_tokens=t_tokens,
+        )
+
         return AnswerResult(
             answer=answer_text,
             selected_strategy=routing.selected_strategy,
@@ -278,9 +328,22 @@ class QueryService:
             generation_latency_ms=gen_latency,
             total_latency_ms=total_latency,
             model_name=response.model_name,
-            prompt_tokens=response.prompt_tokens,
-            completion_tokens=response.completion_tokens,
-            estimated_cost=0.0 if response.mock_mode else None,
+            llm_provider=prov_name,
+            prompt_tokens=p_tokens,
+            completion_tokens=c_tokens,
+            total_tokens=t_tokens,
+            estimated_cost=cost_est.cost_usd if cost_est.is_available else (0.0 if response.mock_mode else None),
+            cost_usd=cost_est.cost_usd if cost_est.is_available else None,
+            cost_inr=cost_est.cost_inr if cost_est.is_available else None,
+            cost_details={
+                "is_available": cost_est.is_available,
+                "formatted_usd": cost_est.formatted_usd,
+                "formatted_inr": cost_est.formatted_inr,
+                "input_price_per_mtok": cost_est.input_price_per_mtok,
+                "output_price_per_mtok": cost_est.output_price_per_mtok,
+                "currency_rate": cost_est.currency_rate,
+                "pricing_source": cost_est.pricing_source,
+            },
             warnings=warnings + (response.warnings or []),
             errors=errors,
             routing_rationale=routing.rationale,
@@ -320,11 +383,12 @@ class QueryService:
 
                 # Detect if this strategy triggered quota exhaustion
                 for err in res.errors:
-                    if "QuotaExceededError" in err or "quota" in err.lower() or "resource_exhausted" in err.lower():
+                    if "QuotaExceededError" in err or "quota" in err.lower() or "resource_exhausted" in err.lower() or "RateLimitError" in err:
                         daily_quota_exhausted = True
+                        prov_name = getattr(self.llm_service, "provider_name", "LLM")
                         quota_reason = (
-                            "Gemini's available quota has been exhausted for the configured model. "
-                            "Check the project's quota or wait until it resets."
+                            f"{prov_name}'s available quota or rate limit has been reached for the configured model. "
+                            "Subsequent generations will be skipped while preserving retrieved evidence."
                         )
                         break
             except Exception as exc:

@@ -125,9 +125,14 @@ class AnswerResult:
     generation_latency_ms: float | None = None
     total_latency_ms: float | None = None
     model_name: str | None = None
+    llm_provider: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    total_tokens: int | None = None
     estimated_cost: float | None = None
+    cost_usd: float | None = None
+    cost_inr: float | None = None
+    cost_details: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     routing_rationale: str | None = None

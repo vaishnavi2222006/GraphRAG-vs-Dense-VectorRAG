@@ -13,6 +13,7 @@ def sanitize_secrets(text: Any, extra_secrets: list[str] | None = None) -> str:
 
     # 1. Redact known environment variables
     env_keys: list[str] = [
+        os.getenv("GROQ_API_KEY", ""),
         os.getenv("GEMINI_API_KEY", ""),
         os.getenv("GOOGLE_API_KEY", ""),
         os.getenv("QDRANT_API_KEY", ""),
@@ -26,8 +27,9 @@ def sanitize_secrets(text: Any, extra_secrets: list[str] | None = None) -> str:
         if len(secret_clean) >= 6:
             sanitized = sanitized.replace(secret_clean, "[REDACTED_SECRET]")
 
-    # 2. Redact Google API key pattern (AIzaSy...)
+    # 2. Redact API key patterns (Google AIzaSy..., Groq gsk_...)
     sanitized = re.sub(r"AIza[0-9A-Za-z-_]{35}", "[REDACTED_API_KEY]", sanitized)
+    sanitized = re.sub(r"gsk_[0-9A-Za-z-_]{20,}", "[REDACTED_API_KEY]", sanitized)
 
     # 3. Redact key=... / api_key=... / bearer ... query strings and headers
     sanitized = re.sub(r"(?i)(key|api_key|token|bearer|secret|password)=([^\s&]+)", r"\1=[REDACTED]", sanitized)

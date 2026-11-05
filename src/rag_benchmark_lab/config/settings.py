@@ -87,7 +87,11 @@ class AppSettings:
     qdrant_api_key: str = field(default_factory=lambda: _env("QDRANT_API_KEY", ""))
     qdrant_collection: str = field(default_factory=lambda: _env("QDRANT_COLLECTION", "rag_chunks"))
 
-    llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "gemini").lower().strip())
+    llm_provider: str = field(default_factory=lambda: _env("LLM_PROVIDER", "groq").lower().strip())
+    groq_api_key: str = field(default_factory=lambda: _env("GROQ_API_KEY", "").strip())
+    groq_model: str = field(default_factory=lambda: _env("GROQ_MODEL", "llama-3.3-70b-versatile").strip())
+    groq_timeout_seconds: int = field(default_factory=lambda: _env_int("GROQ_TIMEOUT_SECONDS", 60))
+
     gemini_api_key: str = field(default_factory=lambda: _env("GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", "")).strip())
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash").strip())
     gemini_timeout_seconds: int = field(default_factory=lambda: _env_int("GEMINI_TIMEOUT_SECONDS", 60))
@@ -132,6 +136,8 @@ class AppSettings:
             raise ValueError("UPLOAD_SIZE_LIMIT_MB must be positive")
         if self.gemini_timeout_seconds <= 0:
             raise ValueError("GEMINI_TIMEOUT_SECONDS must be positive")
+        if self.groq_timeout_seconds <= 0:
+            raise ValueError("GROQ_TIMEOUT_SECONDS must be positive")
         if not self.log_level:
             raise ValueError("LOG_LEVEL must not be empty")
 
@@ -158,6 +164,7 @@ class AppSettings:
         for key in (
             "neo4j_password",
             "qdrant_api_key",
+            "groq_api_key",
             "gemini_api_key",
             "mongodb_uri",
         ):

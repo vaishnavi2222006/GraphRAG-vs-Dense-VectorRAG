@@ -128,16 +128,18 @@ class UserRegistry:
         self.mongo_users = None
 
         if mongodb_uri:
-            self.mongo_client = MongoClient(
-                mongodb_uri,
-                serverSelectionTimeoutMS=10000,
-            )
-
-            self.mongo_client.admin.command("ping")
-
-            self.mongo_users = self.mongo_client[
-                mongodb_database
-            ][mongodb_users_collection]
+            try:
+                self.mongo_client = MongoClient(
+                    mongodb_uri,
+                    serverSelectionTimeoutMS=2000,
+                )
+                self.mongo_client.admin.command("ping")
+                self.mongo_users = self.mongo_client[
+                    mongodb_database
+                ][mongodb_users_collection]
+            except Exception:
+                self.mongo_client = None
+                self.mongo_users = None
 
         self._initialize()
 
@@ -197,6 +199,12 @@ class UserRegistry:
                     citations_json TEXT NOT NULL DEFAULT '[]',
                     graph_evidence_json TEXT,
                     model_name TEXT,
+                    llm_provider TEXT,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    cost_usd REAL,
+                    cost_inr REAL,
                     warnings_json TEXT NOT NULL DEFAULT '[]',
                     errors_json TEXT NOT NULL DEFAULT '[]',
                     mock_mode INTEGER NOT NULL DEFAULT 0,
@@ -258,6 +266,19 @@ class UserRegistry:
                 CREATE INDEX IF NOT EXISTS idx_comp_strat_strat ON comparison_strategy_results(strategy);
             """)
 
+            # Ensure schema compatibility for messages table in existing databases
+            existing_msg_cols = {row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()}
+            for col_name, col_type in [
+                ("llm_provider", "TEXT"),
+                ("prompt_tokens", "INTEGER"),
+                ("completion_tokens", "INTEGER"),
+                ("total_tokens", "INTEGER"),
+                ("cost_usd", "REAL"),
+                ("cost_inr", "REAL"),
+            ]:
+                if col_name not in existing_msg_cols:
+                    conn.execute(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}")
+
     # ─── User Management ───────────────────────────────────────────────────────
 
     def register_user(
@@ -283,18 +304,14 @@ class UserRegistry:
         if errors:
             return None, errors
 
-        if self.mongo_users is None:
-            return None, ["MongoDB is not configured."]
-
         existing_sqlite = None
-
         with self._connect() as conn:
             existing_sqlite = conn.execute(
                 "SELECT user_id FROM users WHERE email = ?",
                 (email,),
             ).fetchone()
 
-        if existing_sqlite or self.mongo_users.find_one({"email": email}):
+        if existing_sqlite or (self.mongo_users is not None and self.mongo_users.find_one({"email": email})):
             return None, [
                 "An account with this email address already exists."
             ]
@@ -306,46 +323,43 @@ class UserRegistry:
         now = datetime.now(timezone.utc).isoformat()
         password_hash = _hash_password(password)
 
-        mongo_user = {
-            "user_id": user_id,
-            "full_name": full_name,
-            "email": email,
-            "password_hash": password_hash,
-            "is_active": True,
-            "created_at": now,
-            "updated_at": now,
-        }
+        if self.mongo_users is not None:
+            mongo_user = {
+                "user_id": user_id,
+                "full_name": full_name,
+                "email": email,
+                "password_hash": password_hash,
+                "is_active": True,
+                "created_at": now,
+                "updated_at": now,
+            }
+            try:
+                self.mongo_users.insert_one(mongo_user)
+            except DuplicateKeyError:
+                return None, [
+                    "An account with this email address already exists."
+                ]
+            except Exception as exc:
+                return None, [f"Registration failed: {exc}"]
 
-        try:
-            self.mongo_users.insert_one(mongo_user)
-
-            with self._connect() as conn:
-                conn.execute(
-                    """
-                    INSERT INTO users (
-                        user_id, full_name, email, password_hash,
-                        is_active, created_at, updated_at
-                    )
-                    VALUES (?, ?, ?, ?, 1, ?, ?)
-                    """,
-                    (
-                        user_id,
-                        full_name,
-                        email,
-                        password_hash,
-                        now,
-                        now,
-                    ),
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO users (
+                    user_id, full_name, email, password_hash,
+                    is_active, created_at, updated_at
                 )
-
-        except DuplicateKeyError:
-            return None, [
-                "An account with this email address already exists."
-            ]
-
-        except Exception as exc:
-            self.mongo_users.delete_one({"user_id": user_id})
-            return None, [f"Registration failed: {exc}"]
+                VALUES (?, ?, ?, ?, 1, ?, ?)
+                """,
+                (
+                    user_id,
+                    full_name,
+                    email,
+                    password_hash,
+                    now,
+                    now,
+                ),
+            )
 
         return UserRecord(
             user_id=user_id,
@@ -366,7 +380,23 @@ class UserRegistry:
         email = email.strip().lower()
 
         if self.mongo_users is None:
-            return None, "MongoDB is not configured."
+            with self._connect() as conn:
+                row = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+            if not row:
+                return None, "No account found with that email address."
+            if not bool(row["is_active"]):
+                return None, "This account is inactive."
+            if not _verify_password(password, row["password_hash"]):
+                return None, "Incorrect password."
+            return UserRecord(
+                user_id=row["user_id"],
+                full_name=row["full_name"],
+                email=row["email"],
+                password_hash=row["password_hash"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+                is_active=bool(row["is_active"]),
+            ), ""
 
         try:
             # 1. Check MongoDB first.
@@ -699,8 +729,9 @@ class UserRegistry:
                     message_id, conversation_id, user_id, role, content,
                     retrieval_strategy, retrieval_latency_ms, generation_latency_ms, total_latency_ms,
                     citations_json, graph_evidence_json, model_name,
+                    llm_provider, prompt_tokens, completion_tokens, total_tokens, cost_usd, cost_inr,
                     warnings_json, errors_json, mock_mode, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(message_id) DO NOTHING""",
                 (
                     message.message_id,
@@ -715,6 +746,12 @@ class UserRegistry:
                     json.dumps(message.citations, ensure_ascii=False),
                     json.dumps(message.graph_evidence, ensure_ascii=False) if message.graph_evidence else None,
                     message.model_name,
+                    getattr(message, "llm_provider", None),
+                    getattr(message, "prompt_tokens", None),
+                    getattr(message, "completion_tokens", None),
+                    getattr(message, "total_tokens", None),
+                    getattr(message, "cost_usd", None),
+                    getattr(message, "cost_inr", None),
                     json.dumps(message.warnings, ensure_ascii=False),
                     json.dumps(message.errors, ensure_ascii=False),
                     1 if message.mock_mode else 0,
@@ -739,6 +776,7 @@ class UserRegistry:
             ).fetchall()
         result = []
         for row in rows:
+            keys = row.keys()
             result.append({
                 "message_id": row["message_id"],
                 "conversation_id": row["conversation_id"],
@@ -752,6 +790,12 @@ class UserRegistry:
                 "citations": json.loads(row["citations_json"] or "[]"),
                 "graph_evidence": json.loads(row["graph_evidence_json"]) if row["graph_evidence_json"] else None,
                 "model_name": row["model_name"],
+                "llm_provider": row["llm_provider"] if "llm_provider" in keys else None,
+                "prompt_tokens": row["prompt_tokens"] if "prompt_tokens" in keys else None,
+                "completion_tokens": row["completion_tokens"] if "completion_tokens" in keys else None,
+                "total_tokens": row["total_tokens"] if "total_tokens" in keys else None,
+                "cost_usd": row["cost_usd"] if "cost_usd" in keys else None,
+                "cost_inr": row["cost_inr"] if "cost_inr" in keys else None,
                 "warnings": json.loads(row["warnings_json"] or "[]"),
                 "errors": json.loads(row["errors_json"] or "[]"),
                 "mock_mode": bool(row["mock_mode"]),

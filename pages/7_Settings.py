@@ -129,12 +129,18 @@ p_col1, p_col2 = st.columns([1.2, 1.8])
 with p_col1:
     with st.container(border=True):
         st.markdown("**Configured Provider**")
-        st.caption("Google Gemini is the default provider. Alternative providers like local Ollama are supported via configuration.")
+        st.caption("Groq is the primary default provider. Alternative providers like Google Gemini and local Ollama are supported via configuration.")
 
         curr_provider = settings.llm_provider
         st.markdown(f"Active Provider: **{curr_provider.upper()}**")
 
-        if curr_provider == "gemini":
+        if curr_provider == "groq":
+            is_configured = hasattr(context.llm_service, "is_configured") and context.llm_service.is_configured()
+            if is_configured:
+                st.success(f"Groq API configured (Model: `{settings.groq_model}`)")
+            else:
+                st.error("Groq API key is not configured. Please update `GROQ_API_KEY` in your `.env` file and restart the application.")
+        elif curr_provider == "gemini":
             is_configured = hasattr(context.llm_service, "is_configured") and context.llm_service.is_configured()
             if is_configured:
                 st.success(f"Google Gemini configured (Model: `{settings.gemini_model}`)")
@@ -145,22 +151,24 @@ with p_col1:
 
 with p_col2:
     with st.container(border=True):
-        st.markdown("**How to Update Gemini API Key**")
+        st.markdown("**How to Update API Keys & Model**")
         st.markdown(
             """
 1. Open `.env` in the project root:
    ```bash
    nano ~/Downloads/GraphRAG\\ vs.\\ Dense\\ Vector\\ RAG/.env
    ```
-2. Update the `GEMINI_API_KEY` entry:
+2. Update the `LLM_PROVIDER`, `GROQ_API_KEY`, or `GROQ_MODEL` entry:
    ```bash
-   GEMINI_API_KEY=your_new_key_here
+   LLM_PROVIDER=groq
+   GROQ_API_KEY=your_new_groq_key_here
+   GROQ_MODEL=llama-3.3-70b-versatile
    ```
 3. Restart Streamlit:
    ```bash
    .venv/bin/streamlit run app.py
    ```
-4. **Note on Quota**: Keys belonging to the same Google Cloud / AI Studio project generally share the project's quota. If daily quota was exhausted, creating a new key in the same project will not reset the limit.
+4. **Note**: Secrets are strictly protected in memory and masked throughout the application.
             """
         )
 
@@ -196,11 +204,15 @@ with tab_db:
     st.dataframe(pd.DataFrame(db_table), use_container_width=True, hide_index=True)
 
 with tab_llm:
-    llm_key_status = "Configured (***)" if (hasattr(context.llm_service, "is_configured") and context.llm_service.is_configured()) else "Not Configured"
+    groq_key_status = "Configured (***)" if bool(settings.groq_api_key) else "Not Configured"
+    gemini_key_status = "Configured (***)" if bool(settings.gemini_api_key) else "Not Configured"
     llm_table = [
         {"Parameter": "Default LLM Provider", "Value": settings.llm_provider.upper(), "Description": "Active answer generation backend"},
-        {"Parameter": "Gemini Model", "Value": settings.gemini_model, "Description": "Google Gemini model name"},
-        {"Parameter": "Gemini API Key", "Value": llm_key_status, "Description": "API key configuration status (secrets masked)"},
+        {"Parameter": "Groq Model", "Value": settings.groq_model, "Description": "Configured Groq LLM model"},
+        {"Parameter": "Groq API Key", "Value": groq_key_status, "Description": "Status of GROQ_API_KEY environment variable (masked)"},
+        {"Parameter": "Groq Timeout (s)", "Value": str(settings.groq_timeout_seconds), "Description": "Timeout for Groq API requests"},
+        {"Parameter": "Gemini Model", "Value": settings.gemini_model, "Description": "Optional Google Gemini model name"},
+        {"Parameter": "Gemini API Key", "Value": gemini_key_status, "Description": "API key configuration status for Gemini (masked)"},
         {"Parameter": "Gemini Timeout (s)", "Value": str(settings.gemini_timeout_seconds), "Description": "Timeout for Gemini API requests"},
         {"Parameter": "Ollama Base URL", "Value": settings.ollama_base_url, "Description": "Alternative local inference endpoint"},
         {"Parameter": "Ollama Model", "Value": settings.ollama_model, "Description": "Alternative local LLM model name"},

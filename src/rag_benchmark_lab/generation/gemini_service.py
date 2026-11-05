@@ -20,6 +20,8 @@ from ..utils.errors import (
 
 
 class GeminiLLMService:
+    provider_name: str = "Gemini"
+
     def __init__(
         self,
         api_key: str | None = None,

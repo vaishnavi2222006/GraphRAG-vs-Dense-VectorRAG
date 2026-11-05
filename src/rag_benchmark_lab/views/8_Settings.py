@@ -66,11 +66,13 @@ prov_col1, prov_col2 = st.columns([1, 1])
 
 current_prov = st.session_state.get("override_llm_provider", settings.llm_provider)
 with prov_col1:
+    prov_options = ["groq", "gemini", "ollama"]
+    prov_idx = prov_options.index(current_prov) if current_prov in prov_options else 0
     chosen_prov = st.radio(
         "Active LLM Backend",
-        options=["gemini", "ollama"],
-        index=0 if current_prov == "gemini" else 1,
-        format_func=lambda x: "Google Gemini (Cloud API)" if x == "gemini" else "Ollama (Local Inference)",
+        options=prov_options,
+        index=prov_idx,
+        format_func=lambda x: "Groq API (High-Speed Cloud)" if x == "groq" else ("Google Gemini (Cloud API)" if x == "gemini" else "Ollama (Local Inference)"),
         key="prov_radio",
     )
     if chosen_prov != current_prov:
@@ -82,14 +84,27 @@ with prov_col1:
 
 with prov_col2:
     import os
-    if chosen_prov == "gemini":
+    if chosen_prov == "groq":
+        has_key = bool(settings.groq_api_key or os.getenv("GROQ_API_KEY"))
+        if has_key:
+            st.success(f"✅ Groq is active. Model: `{settings.groq_model}`. API key is configured.")
+        else:
+            st.warning("⚠️ `GROQ_API_KEY` is not detected in environment.")
+            key_input = st.text_input("Enter Groq API Key for current session:", type="password", key="session_groq_key")
+            if st.button("Save Groq API Key to Session"):
+                if key_input.strip():
+                    os.environ["GROQ_API_KEY"] = key_input.strip()
+                    st.cache_resource.clear()
+                    st.success("Groq API key saved. Reloading...")
+                    st.rerun()
+    elif chosen_prov == "gemini":
         has_key = bool(settings.gemini_api_key or os.getenv("GEMINI_API_KEY"))
         if has_key:
             st.success(f"✅ Gemini is active. Model: `{settings.gemini_model}`. API key is configured.")
         else:
             st.warning("⚠️ `GEMINI_API_KEY` is not detected in environment.")
             key_input = st.text_input("Enter Gemini API Key for current session:", type="password", key="session_gemini_key")
-            if st.button("Save API Key to Session"):
+            if st.button("Save Gemini API Key to Session"):
                 if key_input.strip():
                     os.environ["GEMINI_API_KEY"] = key_input.strip()
                     st.cache_resource.clear()
@@ -134,11 +149,15 @@ with group_tab2:
 
 with group_tab3:
     st.markdown("#### LLM Generation & Evaluation Engine")
+    groq_key_display = "Configured (***)" if settings.groq_api_key else "Not Set (Set GROQ_API_KEY)"
     gemini_key_display = "Configured (***)" if settings.gemini_api_key else "Not Set (Set GEMINI_API_KEY)"
     llm_table = [
-        {"Parameter": "Active LLM Provider", "Value": settings.llm_provider.upper(), "Description": "Selected answer generation provider (Gemini or Ollama)"},
+        {"Parameter": "Active LLM Provider", "Value": settings.llm_provider.upper(), "Description": "Selected answer generation provider (Groq, Gemini, or Ollama)"},
+        {"Parameter": "Groq LLM Model", "Value": settings.groq_model, "Description": "High-speed cloud model used when Groq provider is selected"},
+        {"Parameter": "Groq API Key", "Value": groq_key_display, "Description": "Status of GROQ_API_KEY environment variable (masked)"},
+        {"Parameter": "Groq Timeout", "Value": f"{settings.groq_timeout_seconds} seconds", "Description": "Socket timeout for Groq API calls"},
         {"Parameter": "Google Gemini Model", "Value": settings.gemini_model, "Description": "Cloud model used when Gemini provider is selected"},
-        {"Parameter": "Gemini API Key", "Value": gemini_key_display, "Description": "Status of GEMINI_API_KEY environment variable"},
+        {"Parameter": "Gemini API Key", "Value": gemini_key_display, "Description": "Status of GEMINI_API_KEY environment variable (masked)"},
         {"Parameter": "Gemini Timeout", "Value": f"{settings.gemini_timeout_seconds} seconds", "Description": "Socket timeout for Gemini API calls"},
         {"Parameter": "Ollama Base URL", "Value": settings.ollama_base_url, "Description": "Local inference REST API server"},
         {"Parameter": "Ollama LLM Model", "Value": settings.ollama_model, "Description": "Local foundational model used when Ollama provider is selected"},

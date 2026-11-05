@@ -86,10 +86,11 @@ class BenchmarkRunner:
 
                 # Check if this strategy triggered quota exhaustion
                 for err in errors:
-                    if "QuotaExceededError" in err or "quota" in err.lower() or "resource_exhausted" in err.lower():
+                    if "QuotaExceededError" in err or "quota" in err.lower() or "resource_exhausted" in err.lower() or "RateLimitError" in err:
                         daily_quota_exhausted = True
+                        prov_name = getattr(getattr(self.query_service, "llm_service", None), "provider_name", "LLM")
                         quota_reason = (
-                            "Gemini's available quota has been exhausted for the configured model. "
+                            f"{prov_name}'s available quota or rate limit has been reached for the configured model. "
                             "Subsequent generations will be gracefully skipped."
                         )
                         break

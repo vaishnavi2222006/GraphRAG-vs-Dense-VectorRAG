@@ -35,6 +35,8 @@ class LLMService(Protocol):
 
 
 class OllamaLLMService:
+    provider_name: str = "Ollama"
+
     def __init__(self, base_url: str, model_name: str, timeout_seconds: int, retries: int, mock_mode: bool = False) -> None:
         self.base_url = base_url.rstrip("/")
         self.model_name = model_name
@@ -401,18 +403,29 @@ class OllamaLLMService:
 
 
 def create_llm_service(
-    provider: str = "gemini",
+    provider: str = "groq",
+    groq_api_key: str | None = None,
+    groq_model: str | None = None,
     gemini_api_key: str | None = None,
     gemini_model: str | None = None,
     ollama_base_url: str = "http://localhost:11434",
     ollama_model: str = "llama3.1:8b-instruct-q4_K_M",
-    timeout_seconds: int = 120,
+    timeout_seconds: int = 60,
     retries: int = 2,
     mock_mode: bool = False,
 ) -> LLMService:
     """Factory to instantiate the configured LLM service provider."""
-    provider_clean = (provider or "gemini").lower().strip()
-    if provider_clean == "gemini":
+    provider_clean = (provider or "groq").lower().strip()
+    if provider_clean == "groq":
+        from .groq_service import GroqLLMService
+
+        return GroqLLMService(
+            api_key=groq_api_key,
+            model_name=groq_model,
+            timeout_seconds=timeout_seconds,
+            retries=retries,
+        )
+    elif provider_clean == "gemini":
         from .gemini_service import GeminiLLMService
 
         return GeminiLLMService(

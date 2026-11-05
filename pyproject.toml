@@ -22,6 +22,7 @@ dependencies = [
   "networkx>=3.3,<4",
   "pytest>=8.2,<9",
   "google-genai>=0.1.0",
+  "groq>=0.9.0",
   "python-dotenv>=1.0.0",
   "pymongo>=4.9,<5",
 ]

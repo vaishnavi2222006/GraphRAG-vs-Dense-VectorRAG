@@ -10,7 +10,7 @@ from rag_benchmark_lab.app import get_context
 from rag_benchmark_lab.schemas.auth import MessageRecord
 from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
-from rag_benchmark_lab.utils.ui import inject_custom_css, render_dev_mode_banner, render_strategy_badge
+from rag_benchmark_lab.utils.ui import format_chat_markdown, inject_custom_css, render_dev_mode_banner, render_strategy_badge
 
 # page config handled in main app
 inject_custom_css()
@@ -264,7 +264,7 @@ for msg in messages:
         <div style="display:flex;justify-content:flex-start;margin:4px 0;">
             <div style="max-width:85%;">
                 <div class="chat-meta">🤖 Assistant {badge}{mock_notice}{latency_info}</div>
-                <div class="chat-bubble-assistant">{msg["content"]}</div>
+                <div class="chat-bubble-assistant">{format_chat_markdown(msg["content"])}</div>
         """, unsafe_allow_html=True)
 
         # Citations
@@ -322,7 +322,10 @@ for i, sug in enumerate(suggestions):
 
 import os
 
-if context.settings.llm_provider == "gemini" and not (context.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")):
+if context.settings.llm_provider == "groq" and not (context.settings.groq_api_key or os.getenv("GROQ_API_KEY")):
+    st.warning("⚠️ **Groq is configured as the active answer-generation provider, but `GROQ_API_KEY` is not set.** "
+               "Please add `GROQ_API_KEY=your_key_here` to your `.env` file or export it in your environment to generate live grounded answers.")
+elif context.settings.llm_provider == "gemini" and not (context.settings.gemini_api_key or os.getenv("GEMINI_API_KEY")):
     st.warning("⚠️ **Google Gemini is configured as the active answer-generation provider, but `GEMINI_API_KEY` is not set.** "
                "Please add `GEMINI_API_KEY=your_key_here` to your `.env` file or export it in your environment to generate live grounded answers.")
 
@@ -421,6 +424,12 @@ if question:
         citations=citations_for_storage,
         graph_evidence=graph_ev_for_storage,
         model_name=result.model_name,
+        llm_provider=result.llm_provider,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        total_tokens=result.total_tokens,
+        cost_usd=result.cost_usd,
+        cost_inr=result.cost_inr,
         warnings=result.warnings or [],
         errors=result.errors or [],
         mock_mode=bool(result.warnings and "mock_mode_active" in result.warnings),

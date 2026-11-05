@@ -5,7 +5,9 @@ Plotly chart theming, and reusable UI components inspired by Linear, Vercel, Str
 """
 from __future__ import annotations
 
+import html
 import math
+import re
 from typing import Any
 import streamlit as st
 
@@ -666,14 +668,9 @@ div[data-testid="stMetricLabel"] {{
 }}
 
 /* ── Dataframes & Tables ─────────────────────────────────────────────────── */
-[data-testid="stDataFrame"],
-[data-testid="stDataFrame"] > div,
-.dvn-scroller {{
+[data-testid="stDataFrame"] {{
   border: 1px solid var(--border) !important;
   border-radius: var(--radius) !important;
-  overflow: hidden !important;
-  background: var(--card) !important;
-  color: var(--text) !important;
   box-shadow: var(--shadow-sm) !important;
 }}
 
@@ -745,6 +742,45 @@ div[data-testid="stMetricLabel"] {{
   color: var(--text);
   line-height: 1.65;
   box-shadow: var(--shadow-sm);
+  word-wrap: break-word;
+}}
+.chat-assistant p {{
+  margin: 0 0 8px 0;
+}}
+.chat-assistant p:last-child {{
+  margin-bottom: 0;
+}}
+.chat-assistant ul, .chat-assistant ol {{
+  margin: 6px 0 10px 20px;
+  padding: 0;
+}}
+.chat-assistant li {{
+  margin-bottom: 4px;
+  line-height: 1.55;
+}}
+.chat-assistant strong {{
+  font-weight: 700;
+  color: var(--text);
+}}
+.chat-assistant h3, .chat-assistant h4 {{
+  margin: 12px 0 6px 0;
+  font-weight: 700;
+  color: var(--accent);
+}}
+.chat-assistant table {{
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0 12px 0;
+  font-size: 13px;
+}}
+.chat-assistant th, .chat-assistant td {{
+  border: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: left;
+}}
+.chat-assistant th {{
+  background: var(--card-hi);
+  font-weight: 700;
 }}
 
 div[data-testid="stChatInput"] {{
@@ -1055,6 +1091,96 @@ def render_html(html_str: str) -> None:
         st.markdown(html_str, unsafe_allow_html=True)
 
 
+def format_chat_markdown(text: str) -> str:
+    """Convert common markdown structures (paragraphs, headings, lists, bold, tables, citations) to clean HTML for chat containers."""
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    blocks = re.split(r"\n\s*\n", text.strip())
+    html_blocks: list[str] = []
+
+    def _inline(s: str) -> str:
+        s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+        s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+        s = re.sub(r"(?<!\*)\*([^*]+)\*(?!\*)", r"<em>\1</em>", s)
+        return s
+
+    for block in blocks:
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.split("\n")
+
+        # Table detection
+        if all("|" in l for l in lines) and len(lines) >= 2:
+            table_html = ["<table>"]
+            headers = [c.strip() for c in lines[0].split("|") if c.strip()]
+            table_html.append("<thead><tr>" + "".join(f"<th>{html.escape(h)}</th>" for h in headers) + "</tr></thead>")
+            table_html.append("<tbody>")
+            for row_line in lines[1:]:
+                if re.match(r"^[\s|:-]+$", row_line):
+                    continue
+                cells = [c.strip() for c in row_line.split("|") if c.strip()]
+                table_html.append("<tr>" + "".join(f"<td>{_inline(c)}</td>" for c in cells) + "</tr>")
+            table_html.append("</tbody></table>")
+            html_blocks.append("".join(table_html))
+            continue
+
+        mixed_lines: list[str] = []
+        in_sublist = False
+        is_ordered = False
+        sublist_items: list[str] = []
+
+        for l in lines:
+            trimmed = l.strip()
+            if re.match(r"^[\*\-]\s+", trimmed):
+                if not in_sublist or is_ordered:
+                    if in_sublist and is_ordered:
+                        inner_s = "".join(sublist_items)
+                        mixed_lines.append(f"<ol>{inner_s}</ol>")
+                    in_sublist = True
+                    is_ordered = False
+                    sublist_items = []
+                sub_content = re.sub(r"^[\*\-]\s+", "", trimmed).strip()
+                sublist_items.append(f"<li>{_inline(sub_content)}</li>")
+            elif re.match(r"^\d+\.\s+", trimmed):
+                if not in_sublist or not is_ordered:
+                    if in_sublist and not is_ordered:
+                        inner_s = "".join(sublist_items)
+                        mixed_lines.append(f"<ul>{inner_s}</ul>")
+                    in_sublist = True
+                    is_ordered = True
+                    sublist_items = []
+                sub_content = re.sub(r"^\d+\.\s+", "", trimmed).strip()
+                sublist_items.append(f"<li>{_inline(sub_content)}</li>")
+            else:
+                if in_sublist:
+                    tag = "ol" if is_ordered else "ul"
+                    inner_s = "".join(sublist_items)
+                    mixed_lines.append(f"<{tag}>{inner_s}</{tag}>")
+                    in_sublist = False
+                    sublist_items = []
+                if trimmed.startswith("#### "):
+                    mixed_lines.append(f"<h5>{_inline(trimmed[5:])}</h5>")
+                elif trimmed.startswith("### "):
+                    mixed_lines.append(f"<h4>{_inline(trimmed[4:])}</h4>")
+                elif trimmed.startswith("## "):
+                    mixed_lines.append(f"<h3>{_inline(trimmed[3:])}</h3>")
+                elif trimmed.startswith("# "):
+                    mixed_lines.append(f"<h2>{_inline(trimmed[2:])}</h2>")
+                elif trimmed:
+                    mixed_lines.append(f"<p>{_inline(trimmed)}</p>")
+
+        if in_sublist:
+            tag = "ol" if is_ordered else "ul"
+            inner_s = "".join(sublist_items)
+            mixed_lines.append(f"<{tag}>{inner_s}</{tag}>")
+
+        html_blocks.append("".join(mixed_lines))
+
+    return "".join(html_blocks)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 3. NATIVE TOP NAVIGATION BAR
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1121,7 +1247,7 @@ def render_topnav(active_page: str = "Home") -> None:
         st.markdown(active_css, unsafe_allow_html=True)
 
     with st.container(key="rag_topnav"):
-        c_brand, c_nav, c_right = st.columns([2.0, 5.5, 2.5], vertical_alignment="center")
+        c_brand, c_nav, c_right = st.columns([1.7, 6.3, 2.0], vertical_alignment="center")
 
         with c_brand:
             with st.container(key="nav_brand_col"):
@@ -1132,7 +1258,7 @@ def render_topnav(active_page: str = "Home") -> None:
                 )
 
         with c_nav:
-            n1, n2, n3, n4, n5, n6 = st.columns(6, gap="small", vertical_alignment="center")
+            n1, n2, n3, n4, n5, n6, n7 = st.columns(7, gap="small", vertical_alignment="center")
             with n1:
                 with st.container(key="nav_item_home"):
                     _safe_page_link("pages/1_Home.py", label="Home", icon=":material/home:")
@@ -1151,6 +1277,9 @@ def render_topnav(active_page: str = "Home") -> None:
             with n6:
                 with st.container(key="nav_item_history"):
                     _safe_page_link("pages/6_History.py", label="History", icon=":material/history:")
+            with n7:
+                with st.container(key="nav_item_intelligence"):
+                    _safe_page_link("pages/8_RAG_Intelligence.py", label="Intelligence", icon=":material/insights:")
 
         with c_right:
             # Theme toggle on the right

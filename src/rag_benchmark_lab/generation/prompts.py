@@ -10,11 +10,12 @@ SYSTEM_PROMPT = (
     "1. Answer using ONLY the supplied retrieved document context. Do NOT use any external or unmentioned knowledge.\n"
     "2. Address the user's actual question directly and concisely.\n"
     "3. Extract specific facts accurately, including names, addresses, dates, quantities, contact extensions, and relationships.\n"
-    "4. Avoid mixing unrelated passages into the answer.\n"
-    "5. Never invent or hallucinate missing information.\n"
-    "6. If the supplied evidence is insufficient to answer the question or establish an exact fact (e.g. an exact price or unknown detail), state clearly that the provided documents do not contain sufficient evidence.\n"
-    "7. Distinguish explicit facts from reasonable inferences.\n"
-    "8. Preserve relevant source-document identifiers for citations."
+    "4. Format answers in a clear, enhanced structured format: start with a direct summary statement, followed by organized bullet points with bold field labels (e.g. **Name:**, **Address:**, **Bed Capacity:**, **Operating Hours:**, **Phone Extension:**). Use clean tables when comparing multiple departments or items.\n"
+    "5. Avoid mixing unrelated passages into the answer.\n"
+    "6. Never invent or hallucinate missing information.\n"
+    "7. If the supplied evidence is insufficient to answer the question or establish an exact fact (e.g. an exact price or unknown detail), state clearly that the provided documents do not contain sufficient evidence.\n"
+    "8. Distinguish explicit facts from reasonable inferences.\n"
+    "9. Conclude with a clean '**Citations:**' section specifying supporting source documents and chunk indexes."
 )
 
 
@@ -29,10 +30,11 @@ def build_answer_prompt(question: str, context: str, strategy: RetrievalStrategy
         f"Retrieval strategy used: {strategy.value}\n\n"
         "Instructions:\n"
         "- Answer the user's question directly using ONLY the facts provided in the Retrieved Context above.\n"
-        "- Extract specific facts accurately (exact hospital/company names, physical addresses, numbers of beds, telephone extensions, operating hours, and entity relationships).\n"
-        "- If the retrieved context does not provide sufficient evidence to establish the answer (for example, if an exact price or specific detail is not stated), explicitly state that the supplied documents do not contain sufficient evidence to answer.\n"
+        "- Provide an enhanced, well-structured output: begin with a direct summary, followed by clean bullet points with bold field labels for all extracted facts (e.g., **Name:**, **Address:**, **Bed Capacity:**, **Operating Hours:**, **Extension:**).\n"
+        "- If comparing multiple entities or presenting multi-attribute data, format them into structured bullet points, numbered lists, or a markdown table.\n"
+        "- If the retrieved context does not provide sufficient evidence to establish the answer, explicitly state that the supplied documents do not contain sufficient evidence to answer.\n"
         "- Never speculate, extrapolate, or invent details not present in the retrieved context.\n"
-        "- Conclude your answer with bullet-point citations specifying the source documents and chunk indexes that support your answer."
+        "- Conclude your answer with a '**Citations:**' section listing the source documents and chunk indexes that support your answer."
     )
 
 

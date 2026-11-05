@@ -251,9 +251,12 @@ def recommend_best_approach(
 
     if len(successful) == 1:
         only = successful[0]
+        reason = f"{only.strategy} was the only approach that completed successfully."
+        if not has_ground_truth:
+            reason += " (Provisional recommendation: no reference answer supplied for objective verification)."
         return RecommendationResult(
             recommended_strategy=only.strategy,
-            reason=f"{only.strategy} was the only approach that completed successfully.",
+            reason=reason,
             strengths=only.strengths,
             weaknesses=only.weaknesses,
             relevant_metrics={"composite_score": only.composite_score, "status": only.status_label},

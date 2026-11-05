@@ -4,9 +4,9 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
-from typing import Iterable
+from typing import Any, Iterable
 
-from ..generation.llm_service import OllamaLLMService
+from ..generation.llm_service import LLMService, OllamaLLMService
 from ..generation.prompts import build_structured_extraction_prompt
 from ..schemas.documents import EntityRecord, RelationshipRecord
 from ..utils.errors import StructuredOutputError
@@ -479,7 +479,7 @@ class ExtractionResult:
 
 
 class EntityRelationshipExtractor:
-    def __init__(self, llm_service: OllamaLLMService, entity_categories: list[str] | None = None) -> None:
+    def __init__(self, llm_service: LLMService | OllamaLLMService | Any, entity_categories: list[str] | None = None) -> None:
         self.llm_service = llm_service
         self.entity_categories = entity_categories or [
             # Technical / software domain

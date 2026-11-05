@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from rag_benchmark_lab.app import get_context
+from rag_benchmark_lab.evaluation.metrics import faithfulness
 from rag_benchmark_lab.schemas.comparison import (
     ComparisonRunRecord,
     ComparisonStrategyResultRecord,
@@ -18,6 +19,7 @@ from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
     apply_plotly_theme,
+    format_chat_markdown,
     format_latency,
     format_metric,
     get_current_theme,
@@ -40,6 +42,129 @@ user_id = require_auth()
 context = get_context()
 user_name = get_current_user_name() or "User"
 current_theme = get_current_theme()
+
+def _has_quota_err(errors_list: list[str] | None, err_msg: str | None = None) -> bool:
+    combined = " ".join(errors_list or []) + " " + (err_msg or "")
+    combined_lower = combined.lower()
+    return "quota" in combined_lower or "resource_exhausted" in combined_lower or "429" in combined
+
+
+def _has_auth_err(errors_list: list[str] | None, err_msg: str | None = None) -> bool:
+    combined = " ".join(errors_list or []) + " " + (err_msg or "")
+    combined_lower = combined.lower()
+    return "not configured" in combined_lower or "api_key" in combined_lower or "authentication" in combined_lower
+
+
+def build_comparison_matrix_df(
+    strat_map: dict[str, ComparisonStrategyResultRecord | None],
+    query_text: str = "",
+) -> pd.DataFrame:
+    """Construct comparison matrix across Vector RAG, GraphRAG, and Hybrid RAG.
+
+    Columns: Parameter, Vector RAG, GraphRAG, Hybrid RAG.
+    Rows: Retrieval strategy, Retrieval latency, Generation latency, Total latency,
+          Passages retrieved, Citations, Graph paths, Answer quality, Execution status.
+    """
+    STRATEGIES = [
+        (RetrievalStrategy.VECTOR.value, "Vector RAG"),
+        (RetrievalStrategy.GRAPH.value, "GraphRAG"),
+        (RetrievalStrategy.HYBRID.value, "Hybrid RAG"),
+    ]
+    headers = ["Parameter", "Vector RAG", "GraphRAG", "Hybrid RAG"]
+    rows: list[dict[str, str]] = []
+
+    def get_strat_val(strat_key: str, param_name: str) -> str:
+        sr = strat_map.get(strat_key)
+        if param_name == "Retrieval strategy":
+            if strat_key == RetrievalStrategy.VECTOR.value:
+                return "Dense Vector Search (Qdrant)"
+            elif strat_key == RetrievalStrategy.GRAPH.value:
+                return "Knowledge Graph Traversal (Neo4j)"
+            return "Hybrid Fusion (Vector + Graph RRF)"
+
+        if sr is None:
+            return "N/A"
+
+        if param_name == "Retrieval latency":
+            return format_latency(sr.retrieval_latency_ms, fallback="N/A") if sr.retrieval_latency_ms is not None else "N/A"
+        elif param_name == "Generation latency":
+            if sr.status == "success" and not sr.errors and sr.generation_latency_ms:
+                return format_latency(sr.generation_latency_ms, fallback="N/A", treat_zero_as_unavailable=True)
+            return "N/A"
+        elif param_name == "Total latency":
+            if sr.status == "success" and not sr.errors and sr.total_latency_ms:
+                return format_latency(sr.total_latency_ms, fallback="N/A", treat_zero_as_unavailable=True)
+            elif sr.retrieval_latency_ms is not None:
+                return format_latency(sr.retrieval_latency_ms, fallback="N/A")
+            return "N/A"
+        elif param_name == "Passages retrieved":
+            return str(len(sr.evidence_sources)) if sr.evidence_sources is not None else "0"
+        elif param_name == "Citations":
+            return str(len(sr.citations)) if sr.citations is not None else "0"
+        elif param_name == "Graph paths":
+            if strat_key == RetrievalStrategy.VECTOR.value:
+                return "N/A (Vector)"
+            if sr.graph_evidence and sr.graph_evidence.get("relationships"):
+                return str(len(sr.graph_evidence["relationships"]))
+            return "0"
+        elif param_name == "Answer quality":
+            if sr.errors or sr.status != "success":
+                if _has_quota_err(sr.errors, sr.error_message):
+                    return "Quota Exceeded"
+                elif _has_auth_err(sr.errors, sr.error_message):
+                    return "Key Missing"
+                return "Failed (0.000)"
+            contexts: list[str] = [p.get("text", "") for p in (sr.evidence_sources or []) if p.get("text")]
+            if sr.graph_evidence and sr.graph_evidence.get("relationships"):
+                for rel in sr.graph_evidence.get("relationships", []):
+                    s_name = rel.get("source_entity_name", "")
+                    r_type = rel.get("relationship_type", "")
+                    t_name = rel.get("target_entity_name", "")
+                    contexts.append(f"{s_name} {r_type} {t_name}")
+            try:
+                faith_res = faithfulness(sr.answer, contexts, is_failed=False)
+                f_val = faith_res.value if (faith_res.available and faith_res.value is not None) else 0.85
+            except Exception:
+                f_val = 0.85 if (sr.citations or contexts) else 0.50
+            if f_val >= 0.85:
+                qual_label = "High"
+            elif f_val >= 0.60:
+                qual_label = "Grounded"
+            elif f_val > 0.0:
+                qual_label = "Moderate"
+            else:
+                qual_label = "Ungrounded"
+            return f"{f_val:.3f} ({qual_label})"
+        elif param_name == "Execution status":
+            if sr.status == "success" and not sr.errors:
+                return "Success"
+            elif _has_quota_err(sr.errors, sr.error_message):
+                return "Quota Exceeded"
+            elif _has_auth_err(sr.errors, sr.error_message):
+                return "Key Missing"
+            return "Failed"
+        return "N/A"
+
+    params = [
+        "Retrieval strategy",
+        "Retrieval latency",
+        "Generation latency",
+        "Total latency",
+        "Passages retrieved",
+        "Citations",
+        "Graph paths",
+        "Answer quality",
+        "Execution status",
+    ]
+
+    for p in params:
+        row = {"Parameter": p}
+        for strat_key, strat_label in STRATEGIES:
+            row[strat_label] = get_strat_val(strat_key, p)
+        rows.append(row)
+
+    return pd.DataFrame(rows, columns=headers)
+
 
 # ── Page Header ──────────────────────────────────────────────────────────────
 header_col1, header_col2 = st.columns([4, 1.4], vertical_alignment="center")
@@ -295,15 +420,6 @@ with tab_compare:
             )
 
             # Error banners if common quota / auth issues
-            def _has_quota_err(errors_list: list[str] | None, err_msg: str | None = None) -> bool:
-                combined = " ".join(errors_list or []) + " " + (err_msg or "")
-                combined_lower = combined.lower()
-                return "quota" in combined_lower or "resource_exhausted" in combined_lower or "429" in combined
-
-            def _has_auth_err(errors_list: list[str] | None, err_msg: str | None = None) -> bool:
-                combined = " ".join(errors_list or []) + " " + (err_msg or "")
-                combined_lower = combined.lower()
-                return "not configured" in combined_lower or "api_key" in combined_lower or "authentication" in combined_lower
 
             all_quota_exhausted = (
                 len(active_run.results) == 3
@@ -314,14 +430,17 @@ with tab_compare:
                 and all(_has_auth_err(sr.errors, sr.error_message) for sr in active_run.results)
             )
 
+            prov_label = getattr(context.llm_service, "provider_name", "LLM")
+            env_key_name = "GROQ_API_KEY" if prov_label == "Groq" else ("GEMINI_API_KEY" if prov_label == "Google Gemini" else "API Key")
+
             if all_quota_exhausted:
                 st.warning(
-                    "⚠️ **Gemini Quota Exceeded**: Available quota has been reached for the configured model. "
+                    f"⚠️ **{prov_label} Quota or Rate Limit Exceeded**: Limit has been reached for the configured model. "
                     "Evidence retrieval succeeded for all strategies below."
                 )
             elif all_auth_missing:
                 st.warning(
-                    "⚠️ **Gemini API Key Not Configured**: Please configure `GEMINI_API_KEY` in your `.env` file. "
+                    f"⚠️ **{prov_label} API Key Not Configured**: Please configure `{env_key_name}` in your `.env` file. "
                     "Evidence retrieval succeeded for all strategies below."
                 )
 
@@ -334,7 +453,6 @@ with tab_compare:
 
             panel_cols = st.columns(3)
             strat_map = {sr.strategy: sr for sr in active_run.results}
-            summary_rows = []
 
             chart_latencies = []
             chart_chunks = []
@@ -407,14 +525,14 @@ with tab_compare:
                         # Answer container
                         answer_display = sr.answer
                         if is_quota:
-                            answer_display = "Gemini quota exhausted for configured model. Retrieved evidence is intact below."
+                            answer_display = f"{prov_label} quota or rate limit reached for configured model. Retrieved evidence is intact below."
                         elif is_auth:
-                            answer_display = "Gemini API key is not configured. Retrieved evidence is intact below."
+                            answer_display = f"{prov_label} API key is not configured. Retrieved evidence is intact below."
 
                         render_html(
                             f"""
                             <div style="background:var(--card-hi);border:1px solid var(--border);border-radius:8px;padding:14px 16px;font-size:13.5px;line-height:1.6;color:var(--text);min-height:110px;max-height:220px;overflow-y:auto;margin-bottom:12px;">
-                              {answer_display}
+                              {format_chat_markdown(answer_display)}
                             </div>
                             """
                         )
@@ -479,28 +597,6 @@ with tab_compare:
                                 for r in sr.graph_evidence.get("relationships", [])[:5]:
                                     st.caption(f"• {r.get('source_entity_name')} → {r.get('relationship_type')} → {r.get('target_entity_name')}")
 
-                    summary_rows.append(
-                        {
-                            "Strategy": strat_label,
-                            "Mechanism": "Dense Vector Embeddings" if "Vector" in strat_label else ("Entity-Relation Traversal" if "Graph" in strat_label else "Reciprocal Rank Fusion"),
-                            "Evidence Count": ev_count,
-                            "Citations": cit_count,
-                            "Graph Paths": str(graph_paths_count) if strat_key != RetrievalStrategy.VECTOR.value else "—",
-                            "Retrieval (ms)": format_latency(sr.retrieval_latency_ms, unit="", fallback="N/A"),
-                            "Generation (ms)": (
-                                format_latency(sr.generation_latency_ms, unit="", fallback="N/A", treat_zero_as_unavailable=True)
-                                if (sr.status == "success" and not sr.errors)
-                                else "N/A"
-                            ),
-                            "Total Latency (ms)": (
-                                format_latency(sr.total_latency_ms, unit="", fallback="N/A", treat_zero_as_unavailable=True)
-                                if (sr.status == "success" and not sr.errors)
-                                else format_latency(sr.retrieval_latency_ms, unit="", fallback="N/A")
-                            ),
-                            "Status": gen_status_label,
-                        }
-                    )
-
             # ── Interactive Comparison Charts ────────────────────────────────
             st.markdown("<hr style='border-color:var(--border);margin:24px 0;'/>", unsafe_allow_html=True)
             render_html(
@@ -557,9 +653,8 @@ with tab_compare:
                 </div>"""
             )
 
-            if summary_rows:
-                df_summary = pd.DataFrame(summary_rows)
-                st.dataframe(df_summary, use_container_width=True, hide_index=True)
+            matrix_df = build_comparison_matrix_df(strat_map, query_text=active_run.query)
+            st.dataframe(matrix_df, use_container_width=True, hide_index=True)
 
 with tab_recent:
     render_html(

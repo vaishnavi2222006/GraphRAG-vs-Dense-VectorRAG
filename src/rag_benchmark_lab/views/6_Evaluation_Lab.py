@@ -123,7 +123,9 @@ with cfg_col2:
     query_limit = st.slider("Max Queries to Run", min_value=1, max_value=max(1, len(examples)), value=min(5, len(examples)))
 
 with cfg_col3:
-    if context.settings.llm_provider == "gemini":
+    if context.settings.llm_provider == "groq":
+        llm_engine_label = f"Groq ({context.settings.groq_model})"
+    elif context.settings.llm_provider == "gemini":
         llm_engine_label = f"Google Gemini ({context.settings.gemini_model})"
     elif context.settings.llm_mock_mode:
         llm_engine_label = "Mock / Dev Synthesis"

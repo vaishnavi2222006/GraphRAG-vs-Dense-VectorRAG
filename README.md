@@ -51,7 +51,7 @@ A comprehensive, multi-user experimental web application designed to evaluate, c
 - **Backend:** Python 3.12 (modular service architecture).
 - **Vector Database:** Qdrant (Docker container on port 6333).
 - **Graph Database:** Neo4j Community 5.23 (Docker container on Bolt port 7687).
-- **Local LLM Engine:** Ollama (Llama 3.1 8B on port 11434, with transparent dev fallback mode).
+- **Primary LLM Engine:** Groq API (`llama-3.3-70b-versatile` / high-speed inference, with optional Google Gemini and local Ollama support).
 - **Embeddings:** Sentence Transformers (`all-MiniLM-L6-v2`, 384 dimensions).
 - **Metadata DB:** SQLite 3 (isolated relational tables for users, KBs, conversations, documents, results).
 
@@ -79,15 +79,17 @@ pip install -e .
 cp .env.example .env
 ```
 
-Ensure `.env` contains your desired endpoints:
+Ensure `.env` contains your desired endpoints and API keys:
 ```ini
+LLM_PROVIDER=groq
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=llama-3.3-70b-versatile
+
 QDRANT_URL=http://localhost:6333
 NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
+NEO4J_USERNAME=neo4j
 NEO4J_PASSWORD=password
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.1:8b
-EMBEDDING_MODEL=all-MiniLM-L6-v2
+EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ```
 
 ### 3. Start Database Containers

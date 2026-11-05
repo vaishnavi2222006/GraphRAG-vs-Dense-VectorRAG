@@ -54,6 +54,12 @@ class MessageRecord:
     citations: list[dict[str, Any]] = field(default_factory=list)
     graph_evidence: dict[str, Any] | None = None
     model_name: str | None = None
+    llm_provider: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    cost_usd: float | None = None
+    cost_inr: float | None = None
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     mock_mode: bool = False

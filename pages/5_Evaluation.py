@@ -26,6 +26,7 @@ from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.schemas.evaluation import EvaluationExample
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
+    format_chat_markdown,
     format_latency,
     format_metric,
     get_current_theme,
@@ -102,7 +103,7 @@ def _fmt_count(val: int | float | None) -> str:
 
 
 def build_comparison_matrix_df(eval_results: dict[str, dict[str, Any]]) -> pd.DataFrame:
-    """Construct comparison matrix table for Vector RAG, GraphRAG, and Hybrid RAG."""
+    """Construct comparison matrix table across Vector RAG, GraphRAG, and Hybrid RAG."""
     parameters = [
         ("Answer correctness", "answer_correctness", "score"),
         ("Faithfulness", "faithfulness", "score"),
@@ -111,15 +112,17 @@ def build_comparison_matrix_df(eval_results: dict[str, dict[str, Any]]) -> pd.Da
         ("Citation correctness", "citation_correctness", "score"),
         ("Context precision", "context_precision", "score"),
         ("Context recall", "context_recall", "score"),
+        ("Recall@K", "retrieval_recall_at_k", "score"),
+        ("Mean Reciprocal Rank (MRR)", "mrr", "score"),
         ("Retrieval latency", "retrieval_latency_ms", "latency"),
         ("Generation latency", "generation_latency_ms", "latency"),
         ("Total latency", "total_latency_ms", "latency"),
-        ("Retrieved chunks", "retrieved_chunk_count", "count"),
-        ("Graph paths", "graph_path_count", "count"),
+        ("Retrieved chunk count", "retrieved_chunk_count", "count"),
+        ("Graph path count", "graph_path_count", "count"),
         ("Execution status", "status", "status"),
     ]
 
-    col_headers = ["Parameter", "Vector RAG", "GraphRAG", "Hybrid RAG"]
+    col_headers = ["Parameter"] + [STRAT_META[strat]["label"] for strat in ALL_STRAT_KEYS]
     data_rows = []
 
     for label, key, p_type in parameters:
@@ -379,10 +382,16 @@ if eval_mode == "Mode 1: Single Query Evaluation":
         )
     with c_m2:
         st.markdown("**Configured Provider & Model:**")
-        svc_name = getattr(context.llm_service, "model_name", "gemini-3.5-flash")
+        svc_name = getattr(context.llm_service, "model_name", context.settings.groq_model)
+        prov_title = getattr(context.llm_service, "provider_name", context.settings.llm_provider.upper())
         is_mock = getattr(context.llm_service, "mock_mode", False)
+        st.caption(f"• Provider: **{prov_title}**")
         st.caption(f"• Model: **{svc_name}**")
         st.caption(f"• Mode: **{'Dev Mock Mode' if is_mock else 'Live LLM Provider'}**")
+        if st.button("🔄 Reload Config", key="btn_reload_eval_config", help="Reload .env settings and re-initialize LLM provider"):
+            st.cache_resource.clear()
+            st.session_state.pop("single_eval_data", None)
+            st.rerun()
 
     # Empty KB notice
     if len(_kb_doc_ids) == 0:
@@ -390,7 +399,14 @@ if eval_mode == "Mode 1: Single Query Evaluation":
             "⚠️ The active knowledge base has no documents. Vector RAG, GraphRAG, and Hybrid RAG will have empty corpus scope."
         )
 
-    sq_btn = st.button("Evaluate Query Across Approaches", type="primary", key="btn_run_single_eval")
+    btn_c1, btn_c2 = st.columns([3, 1])
+    with btn_c1:
+        sq_btn = st.button("Evaluate Query Across Approaches", type="primary", key="btn_run_single_eval")
+    with btn_c2:
+        if st.session_state.get("single_eval_data"):
+            if st.button("Clear Results", key="btn_clear_single_eval", help="Clear current evaluation presentation state"):
+                st.session_state.pop("single_eval_data", None)
+                st.rerun()
 
     if sq_btn and single_query.strip():
         # Reset presentation state for the new evaluation run
@@ -422,9 +438,10 @@ if eval_mode == "Mode 1: Single Query Evaluation":
                 )
 
                 for err in ans.errors:
-                    if "QuotaExceededError" in err or "quota" in err.lower() or "resource_exhausted" in err.lower():
+                    if "QuotaExceededError" in err or "quota" in err.lower() or "resource_exhausted" in err.lower() or "RateLimitError" in err:
                         daily_quota_exhausted = True
-                        quota_reason = "Gemini quota exhausted for the configured model."
+                        prov_n = getattr(context.llm_service, "provider_name", "LLM")
+                        quota_reason = f"{prov_n} quota or rate limit reached for the configured model."
                         break
 
                 mets = metric_bundle(
@@ -538,6 +555,9 @@ if eval_mode == "Mode 1: Single Query Evaluation":
     single_data = st.session_state.get("single_eval_data")
     if single_data:
         st.markdown("<hr style='border-color: var(--border); margin: 24px 0;'/>", unsafe_allow_html=True)
+        if single_data.get("query") and single_data.get("query").strip() != single_query.strip():
+            st.info(f"ℹ️ Displaying evaluated results for: *\"{single_data.get('query')}\"*. (Click **Evaluate Query Across Approaches** to evaluate your updated question).")
+
         res_map = single_data["results"]
         all_failed = all(r.get("status") in ("Failed", "Quota Exceeded") or r.get("errors") for r in res_map.values())
         if all_failed:
@@ -561,8 +581,27 @@ if eval_mode == "Mode 1: Single Query Evaluation":
             row_data = res_map[k]
             meta = STRAT_META[k]
             with cols[idx]:
-                status_color = "#34D399" if row_data.get("status") == "Success" else "#F87171"
-                lat_str = format_latency(row_data.get("total_latency_ms"), fallback="N/A", precision=1)
+                is_failed = row_data.get("status") in ("Failed", "Quota Exceeded") or bool(row_data.get("errors"))
+                status_color = "#F87171" if is_failed else "#34D399"
+                lat_str = format_latency(row_data.get("total_latency_ms"), fallback="N/A", precision=1, treat_zero_as_unavailable=True)
+
+                if is_failed:
+                    err_text = "; ".join(row_data.get("errors", [])) or row_data.get("answer", "Generation failed.")
+                    if err_text.startswith("Error generating answer: "):
+                        err_text = err_text.replace("Error generating answer: ", "")
+                    ans_html = f"""
+                    <div style="background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); border-radius: 6px; padding: 10px; font-size: 12.5px; color: #FCA5A5; line-height: 1.45; max-height: 200px; overflow-y: auto;">
+                      <strong>⚠️ Generation Failed:</strong><br/>
+                      {err_text}
+                    </div>
+                    """
+                else:
+                    ans_html = f"""
+                    <div style="background: var(--card-hi); border-radius: 4px; padding: 10px; font-size: 13px; color: var(--text); max-height: 200px; overflow-y: auto; line-height: 1.45;">
+                      {format_chat_markdown(row_data.get('answer', ''))}
+                    </div>
+                    """
+
                 st.markdown(
                     f"""
                     <div style="background: var(--card); border: 1px solid var(--border); border-top: 3px solid {meta['color']}; border-radius: 8px; padding: 12px 14px; margin-bottom: 12px; min-height: 260px;">
@@ -577,9 +616,7 @@ if eval_mode == "Mode 1: Single Query Evaluation":
                       <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 8px;">
                         Latency: <strong>{lat_str}</strong> • Model: {row_data.get('model_name', 'LLM')}
                       </div>
-                      <div style="background: var(--card-hi); border-radius: 4px; padding: 10px; font-size: 13px; color: var(--text); max-height: 200px; overflow-y: auto; line-height: 1.45;">
-                        {row_data.get('answer', '')}
-                      </div>
+                      {ans_html}
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -592,24 +629,33 @@ if eval_mode == "Mode 1: Single Query Evaluation":
         matrix_df = build_comparison_matrix_df(res_map)
         st.dataframe(matrix_df, use_container_width=True, hide_index=True)
 
-        # Explanatory note if any retrieval metric is N/A
+        # Explanatory note if any metric is N/A
         na_explanations: list[str] = []
+
         for strat in active_keys:
             res = res_map.get(strat, {})
             mets = res.get("metrics") or {}
             for m_key, m_label in [
+                ("answer_correctness", "Answer correctness"),
+                ("completeness", "Completeness"),
                 ("context_precision", "Context precision"),
                 ("context_recall", "Context recall"),
+                ("retrieval_recall_at_k", "Recall@K"),
+                ("mrr", "Mean Reciprocal Rank (MRR)"),
             ]:
                 m_obj = mets.get(m_key)
                 if isinstance(m_obj, dict) and not m_obj.get("available", True):
                     raw_reason = m_obj.get("details", {}).get("reason", "missing_required_input")
-                    if raw_reason == "missing_reference_answer":
+                    if raw_reason == "not_applicable_for_direct_llm":
+                        continue
+                    elif raw_reason == "missing_reference_answer":
                         exp = f"**{m_label}**: Requires a valid reference answer to extract and verify expected facts."
                     elif raw_reason in ("missing_relevant_document_ids", "missing_ground_truth_relevance_labels"):
                         exp = f"**{m_label}**: Requires known ground-truth relevant document or chunk identifiers."
                     elif raw_reason == "missing_ground_truth_and_reference_answer":
                         exp = f"**{m_label}**: Requires a reference answer or ground-truth relevance labels to evaluate chunk relevance."
+                    elif raw_reason == "generation_failed":
+                        exp = f"**{m_label}**: Could not be calculated because answer generation encountered an error."
                     else:
                         exp = f"**{m_label}**: {raw_reason.replace('_', ' ').capitalize()}."
                     if exp not in na_explanations:
@@ -617,7 +663,7 @@ if eval_mode == "Mode 1: Single Query Evaluation":
 
         if na_explanations:
             with st.expander("ℹ️ Metric Explanations for N/A Entries", expanded=False):
-                st.caption("The following retrieval metrics could not be calculated because the required ground-truth evaluation data was not supplied:")
+                st.caption("The following metrics could not be calculated or are inherently Not Applicable (N/A):")
                 for exp in na_explanations:
                     st.markdown(f"• {exp}")
 
@@ -656,6 +702,8 @@ if eval_mode == "Mode 1: Single Query Evaluation":
                 fig_q.update_layout(**DARK_LAYOUT)
                 fig_q.update_layout(yaxis=dict(range=[0, 1.05]))
                 st.plotly_chart(fig_q, use_container_width=True)
+            elif all_failed:
+                st.info("Quality comparison chart unavailable because all approaches failed answer generation.")
             else:
                 st.info("No comparative quality metrics available for this query.")
 
@@ -710,13 +758,13 @@ if eval_mode == "Mode 1: Single Query Evaluation":
                         else:
                             st.caption("No graph relationships retrieved.")
 
-                        st.markdown("**Citations:**")
-                        cits = r.get("citations", [])
-                        if cits:
-                            for cit in cits:
-                                st.caption(f"• Document: `{cit.get('document_name')}` | Chunk: `{cit.get('chunk_index')}`")
-                        else:
-                            st.caption("No formal citations generated.")
+                    st.markdown("**Citations:**")
+                    cits = r.get("citations", [])
+                    if cits:
+                        for cit in cits:
+                            st.caption(f"• Document: `{cit.get('document_name')}` | Chunk: `{cit.get('chunk_index')}`")
+                    else:
+                        st.caption("No formal citations generated.")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -800,7 +848,7 @@ else:
         )
     with cfg_col3:
         st.markdown("**Execution Environment:**")
-        st.caption(f"• LLM Model: **{getattr(context.llm_service, 'model_name', 'gemini-3.5-flash')}**")
+        st.caption(f"• LLM Model: **{getattr(context.llm_service, 'model_name', context.settings.groq_model)}**")
         st.caption(f"• Execution Mode: **{'Dev Offline Mock' if context.settings.llm_mock_mode else 'Live Provider'}**")
 
     bench_disabled = not examples or not selected_bench_strategies
@@ -850,6 +898,8 @@ else:
         rows = []
         for res in all_results:
             if not isinstance(res, dict):
+                continue
+            if res.get("strategy") in (RetrievalStrategy.DIRECT.value, "DIRECT"):
                 continue
             mets = res.get("metrics") or {}
             rec = res.get("recommendation") or {}
@@ -1052,7 +1102,7 @@ else:
             b_tab_recs, b_tab_matrix, b_tab_charts, b_tab_inspect, b_tab_hist = st.tabs(
                 [
                     "Per-Query Winners",
-                    "Three-Way Matrix Aggregates",
+                    "Strategy Comparison Aggregates",
                     "Comparative Visualizations",
                     "Per-Question Inspector",
                     "Run History",
@@ -1092,6 +1142,8 @@ else:
 
                 agg_rows = []
                 for strat_k in sorted(list(df["strategy"].unique())):
+                    if strat_k in (RetrievalStrategy.DIRECT.value, "DIRECT"):
+                        continue
                     sub = df[df["strategy"] == strat_k]
                     row_data = {"Approach": STRAT_META.get(strat_k, {}).get("label", strat_k)}
                     for m in metric_cols:
@@ -1146,7 +1198,7 @@ else:
                             y="Score",
                             color="Strategy Label",
                             barmode="group",
-                            title="Quality Metrics Across Four Approaches (0.0 to 1.0)",
+                            title="Quality Metrics Across Approaches (0.0 to 1.0)",
                             color_discrete_map={v["label"]: v["color"] for v in STRAT_META.values()},
                             height=380,
                         )

@@ -52,9 +52,20 @@ class HealthService:
         except Exception as exc:
             results.append(ServiceHealth(name="Neo4j Knowledge Graph", healthy=False, details=f"Neo4j: Unavailable ({exc.__class__.__name__}: {exc})"))
 
-        # 3. LLM Service (Gemini or Ollama)
-        is_gemini = "gemini" in self.llm_service.__class__.__name__.lower()
-        provider_name = "Google Gemini" if is_gemini else "Ollama LLM"
+        # 3. LLM Service (Groq, Gemini, or Ollama)
+        cls_name = self.llm_service.__class__.__name__.lower()
+        if hasattr(self.llm_service, "provider_name"):
+            provider_name = self.llm_service.provider_name
+        elif "groq" in cls_name:
+            provider_name = "Groq"
+        elif "gemini" in cls_name:
+            provider_name = "Google Gemini"
+        else:
+            provider_name = "Ollama LLM"
+
+        is_cloud_provider = "groq" in cls_name or "gemini" in cls_name
+        env_var_name = "GROQ_API_KEY" if "groq" in cls_name else "GEMINI_API_KEY"
+
         try:
             if getattr(self.llm_service, "mock_mode", False):
                 results.append(
@@ -64,22 +75,22 @@ class HealthService:
                         details="LLM unavailable: running in mock/dev mode. Check the configured service and model.",
                     )
                 )
-            elif is_gemini and (hasattr(self.llm_service, "is_configured") and not self.llm_service.is_configured()):
+            elif is_cloud_provider and (hasattr(self.llm_service, "is_configured") and not self.llm_service.is_configured()):
                 results.append(
                     ServiceHealth(
-                        name="Google Gemini LLM Service",
+                        name=f"{provider_name} LLM Service",
                         healthy=False,
-                        details="Gemini API key is not configured. Please update GEMINI_API_KEY in your .env file and restart the application.",
+                        details=f"{provider_name} API key is not configured. Please update {env_var_name} in your .env file and restart the application.",
                     )
                 )
             else:
-                # For Gemini, default to safe local validation (check_remote=False) to avoid consuming API quota during page renders
-                if is_gemini and hasattr(self.llm_service, "health"):
+                # Default to safe local validation (check_remote=False) to avoid consuming API quota/limits during page renders
+                if hasattr(self.llm_service, "health"):
                     import inspect
                     sig = inspect.signature(self.llm_service.health)
                     is_healthy = self.llm_service.health(check_remote=check_remote_llm) if "check_remote" in sig.parameters else self.llm_service.health()
                 else:
-                    is_healthy = self.llm_service.health()
+                    is_healthy = False
 
                 model_name = getattr(self.llm_service, "model_name", "configured model")
                 if is_healthy:

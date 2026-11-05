@@ -16,6 +16,7 @@ from rag_benchmark_lab.services.document_registry import DocumentRegistry
 from rag_benchmark_lab.services.document_service import DocumentService
 from rag_benchmark_lab.services.health_service import HealthService
 from rag_benchmark_lab.services.query_service import QueryService
+from rag_benchmark_lab.services.cost_service import CostService
 from rag_benchmark_lab.services.user_registry import UserRegistry
 from rag_benchmark_lab.utils.ui import _safe_page_link, inject_custom_css, render_dev_mode_banner, render_lab_header
 from rag_benchmark_lab.vector_store.qdrant_store import QdrantStore
@@ -36,6 +37,7 @@ class AppContext:
     graph_retriever: GraphRetriever
     hybrid_retriever: HybridRetriever
     query_service: QueryService
+    cost_service: CostService
     result_store: ResultStore
     health_service: HealthService
 
@@ -89,7 +91,7 @@ def build_context() -> AppContext:
         mongodb_uri=settings.mongodb_uri,
         mongodb_database=settings.mongodb_database,
         mongodb_users_collection=settings.mongodb_users_collection,
-    )
+)
     embedding_service = EmbeddingService(settings.embedding_model, mock_mode=settings.llm_mock_mode)
 
     # 1. Qdrant client adapter: try configured URL, fallback to local in-memory
@@ -122,13 +124,22 @@ def build_context() -> AppContext:
         _restore_qdrant_from_registry(registry, embedding_service, qdrant_store)
 
     # 3. LLM Service
+    if settings.llm_provider == "groq":
+        llm_timeout = settings.groq_timeout_seconds
+    elif settings.llm_provider == "gemini":
+        llm_timeout = settings.gemini_timeout_seconds
+    else:
+        llm_timeout = settings.ollama_timeout_seconds
+
     llm_service = create_llm_service(
         provider=settings.llm_provider,
+        groq_api_key=settings.groq_api_key,
+        groq_model=settings.groq_model,
         gemini_api_key=settings.gemini_api_key,
         gemini_model=settings.gemini_model,
         ollama_base_url=settings.ollama_base_url,
         ollama_model=settings.ollama_model,
-        timeout_seconds=settings.gemini_timeout_seconds if settings.llm_provider == "gemini" else settings.ollama_timeout_seconds,
+        timeout_seconds=llm_timeout,
         retries=settings.ollama_retries,
         mock_mode=settings.llm_mock_mode,
     )
@@ -147,8 +158,9 @@ def build_context() -> AppContext:
     vector_retriever = VectorRetriever(embedding_service, qdrant_store, settings.default_top_k)
     graph_retriever = GraphRetriever(neo4j_store, max_hops=settings.graph_max_hops, max_results=settings.graph_max_results, registry=registry)
     hybrid_retriever = HybridRetriever(vector_retriever, graph_retriever, fusion_k=settings.rrf_k)
+    cost_service = CostService()
     query_service = QueryService(
-        vector_retriever, graph_retriever, hybrid_retriever, llm_service, settings.default_top_k, settings.answer_temperature
+        vector_retriever, graph_retriever, hybrid_retriever, llm_service, settings.default_top_k, settings.answer_temperature, cost_service=cost_service
     )
     result_store = ResultStore(registry)
     health_service = HealthService(qdrant_store, neo4j_store, llm_service, registry)
@@ -167,14 +179,17 @@ def build_context() -> AppContext:
         graph_retriever=graph_retriever,
         hybrid_retriever=hybrid_retriever,
         query_service=query_service,
+        cost_service=cost_service,
         result_store=result_store,
         health_service=health_service,
     )
 
 
-def get_context() -> AppContext:
+def get_context(force_reload: bool = False) -> AppContext:
     import streamlit as st
 
+    if force_reload:
+        st.cache_resource.clear()
     return st.cache_resource(build_context)()
 
 

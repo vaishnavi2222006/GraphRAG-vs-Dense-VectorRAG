@@ -11,6 +11,7 @@ from rag_benchmark_lab.schemas.auth import MessageRecord
 from rag_benchmark_lab.schemas.documents import RetrievalStrategy
 from rag_benchmark_lab.utils.auth import get_current_user_name, require_auth
 from rag_benchmark_lab.utils.ui import (
+    format_chat_markdown,
     format_latency,
     format_metric,
     inject_custom_css,
@@ -285,14 +286,87 @@ else:
                 )
                 citations_html = f'<div style="margin:8px 0 4px 0;">{pills}</div>'
 
+            # ── Per-Query Token & Cost Telemetry Resolution ──────────────────
+            p_tok = msg.get("prompt_tokens")
+            c_tok = msg.get("completion_tokens")
+            t_tok = msg.get("total_tokens")
+            if t_tok is None and p_tok is not None and c_tok is not None:
+                t_tok = p_tok + c_tok
+
+            model_name_disp = msg.get("model_name") or getattr(context.llm_service, "model_name", "Unknown model")
+            provider_disp = msg.get("llm_provider") or getattr(context.llm_service, "provider_name", "Groq")
+
+            cost_est = context.cost_service.calculate_cost(
+                prompt_tokens=p_tok,
+                completion_tokens=c_tok,
+                model_name=model_name_disp,
+                provider=provider_disp,
+                total_tokens=t_tok,
+            )
+
+            # Format tokens
+            in_tok_str = f"{p_tok:,}" if p_tok is not None else "Unavailable"
+            out_tok_str = f"{c_tok:,}" if c_tok is not None else "Unavailable"
+            tot_tok_str = f"{t_tok:,}" if t_tok is not None else "Unavailable"
+
+            # Format latencies
+            ret_lat = msg.get("retrieval_latency_ms")
+            gen_lat = msg.get("generation_latency_ms")
+            ret_lat_str = format_latency(ret_lat, fallback="Unavailable")
+            gen_lat_str = format_latency(gen_lat, fallback="Unavailable", treat_zero_as_unavailable=True)
+            tot_lat_str = format_latency(tot_lat, fallback="Unavailable", treat_zero_as_unavailable=True)
+
+            # Format cost
+            if cost_est.is_available and cost_est.cost_usd is not None and cost_est.cost_inr is not None:
+                cost_badge_html = (
+                    f'<span style="font-weight:700;color:var(--accent);font-size:12.5px;">{cost_est.formatted_usd}</span> '
+                    f'<span style="color:var(--text-muted);font-size:11px;">({cost_est.formatted_inr})</span>'
+                )
+            else:
+                cost_badge_html = '<span style="color:var(--text-muted);font-style:italic;">Cost unavailable</span>'
+
+            # Clean, compact per-query telemetry card below the generated answer
+            telemetry_card_html = f"""
+            <div style="margin-top:10px;background:var(--card-hi);border:1px solid var(--border);border-radius:8px;padding:9px 13px;font-size:12px;color:var(--text);box-shadow:var(--shadow-sm);">
+              <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;padding-bottom:7px;margin-bottom:7px;border-bottom:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="color:var(--text-muted);font-weight:600;">💰 Estimated Cost:</span>
+                  {cost_badge_html}
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;font-size:11.5px;color:var(--text-muted);">
+                  <span>In: <strong style="color:var(--text);font-family:monospace;">{in_tok_str}</strong></span>
+                  <span style="color:var(--border);">·</span>
+                  <span>Out: <strong style="color:var(--text);font-family:monospace;">{out_tok_str}</strong></span>
+                  <span style="color:var(--border);">·</span>
+                  <span>Total Tokens: <strong style="color:var(--accent);font-family:monospace;">{tot_tok_str}</strong></span>
+                </div>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;font-size:11.5px;color:var(--text-muted);">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span>🤖 <strong>Model:</strong> <code style="background:var(--card);padding:1px 5px;border-radius:4px;color:var(--text);font-size:11px;">{model_name_disp}</code></span>
+                  <span>·</span>
+                  <span>🏛️ <strong>Provider:</strong> <span style="color:var(--text);font-weight:600;">{provider_disp}</span></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:7px;">
+                  <span>⏱️ <strong>Retrieval:</strong> <span style="color:var(--text);">{ret_lat_str}</span></span>
+                  <span>·</span>
+                  <span>⚡ <strong>Generation:</strong> <span style="color:var(--text);">{gen_lat_str}</span></span>
+                  <span>·</span>
+                  <span>⌛ <strong>Total Response Time:</strong> <strong style="color:var(--text);">{tot_lat_str}</strong></span>
+                </div>
+              </div>
+            </div>
+            """
+
             render_html(
                 f'<div style="display:flex;justify-content:flex-start;margin:10px 0;">'
                 f'<div style="max-width:85%;width:100%;">'
                 f'<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;display:flex;align-items:center;gap:6px;">'
                 f'<strong>AI Assistant</strong> {badge_html}{mock_notice}{latency_str}'
                 f'</div>'
-                f'<div class="chat-assistant">{msg["content"]}</div>'
+                f'<div class="chat-assistant">{format_chat_markdown(msg["content"])}</div>'
                 f'{citations_html}'
+                f'{telemetry_card_html}'
                 f'</div></div>'
             )
 
@@ -305,9 +379,7 @@ else:
 
             # Expandable evidence details and performance metrics
             has_evidence = bool(citations or msg.get("graph_evidence"))
-            ret_lat = msg.get("retrieval_latency_ms")
-            gen_lat = msg.get("generation_latency_ms")
-            has_metrics = (ret_lat is not None) or (gen_lat is not None) or (tot_lat is not None)
+            has_metrics = (ret_lat is not None) or (gen_lat is not None) or (tot_lat is not None) or (p_tok is not None)
 
             if has_evidence or has_metrics:
                 total_ev = len(citations)
@@ -318,7 +390,7 @@ else:
                     f"Sources & Telemetry ({total_ev} citations"
                     + (f", {len(graph_rels)} graph paths" if graph_rels else "")
                     + ")"
-                ) if has_evidence else "Performance Telemetry"
+                ) if has_evidence else "Performance & Cost Telemetry"
 
                 with st.expander(exp_title):
                     if citations:
@@ -342,23 +414,40 @@ else:
                                 f"→ {r.get('relationship_type','?')} "
                                 f"→ {r.get('target_entity_name','?')}"
                             )
+
+                    st.markdown("**Token Consumption & Cost:**")
+                    t_col1, t_col2, t_col3, t_col4 = st.columns(4)
+                    with t_col1:
+                        st.metric("Input Tokens", in_tok_str)
+                    with t_col2:
+                        st.metric("Output Tokens", out_tok_str)
+                    with t_col3:
+                        st.metric("Total Tokens", tot_tok_str)
+                    with t_col4:
+                        cost_metric_text = (
+                            f"{cost_est.formatted_usd} ({cost_est.formatted_inr})"
+                            if cost_est.is_available
+                            else "Cost unavailable"
+                        )
+                        st.metric("Estimated Cost", cost_metric_text)
+
                     if has_metrics:
                         st.markdown("**Performance Breakdown:**")
                         p_col1, p_col2, p_col3 = st.columns(3)
                         with p_col1:
                             st.metric(
                                 "Retrieval Latency",
-                                format_latency(ret_lat, fallback="Unavailable"),
+                                ret_lat_str,
                             )
                         with p_col2:
                             st.metric(
                                 "Generation Latency",
-                                format_latency(gen_lat, fallback="Unavailable", treat_zero_as_unavailable=True),
+                                gen_lat_str,
                             )
                         with p_col3:
                             st.metric(
                                 "Total Response Time",
-                                format_latency(tot_lat, fallback="Unavailable", treat_zero_as_unavailable=True),
+                                tot_lat_str,
                             )
 
 # ── Suggested Questions Chips ────────────────────────────────────────────────
@@ -466,6 +555,12 @@ if question:
             citations=citations_storage,
             graph_evidence=graph_ev_storage,
             model_name=result.model_name,
+            llm_provider=result.llm_provider,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            total_tokens=result.total_tokens,
+            cost_usd=result.cost_usd,
+            cost_inr=result.cost_inr,
             warnings=result.warnings or [],
             errors=result.errors or [],
             mock_mode=bool(result.warnings and "mock_mode_active" in result.warnings),
